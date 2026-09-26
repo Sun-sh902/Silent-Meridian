@@ -77,7 +77,12 @@ export class Game {
      输入
      ============================================================ */
   bindInput() {
-    this.input = { keys: new Set(), lmb: false, rmb: false, lmbHeld: false };
+    this.input = {
+      keys: new Set(), lmb: false, rmb: false,
+      /* lmbPressed 是「本帧新按下」的沿信号，决定半自动/泵动/左轮是否击发。
+         必须在 player.update() 之后再清除，否则在当帧就被吃掉。 */
+      lmbPressed: false,
+    };
     const canvas = this.canvas;
 
     window.addEventListener('keydown', (e) => {
@@ -124,12 +129,12 @@ export class Game {
       if (e.code === 'Space') this.setTacticalPause(false);
     });
     window.addEventListener('blur', () => {
-      this.input.keys.clear(); this.input.lmb = false; this.input.rmb = false;
+      this.input.keys.clear(); this.input.lmb = false; this.input.rmb = false; this.input.lmbPressed = false;
     });
 
     canvas.addEventListener('mousedown', (e) => {
       if (this.state !== 'play') return;
-      if (e.button === 0) this.input.lmb = true;
+      if (e.button === 0) { this.input.lmb = true; this.input.lmbPressed = true; }
       if (e.button === 2) this.input.rmb = true;
       if (e.button === 1) { e.preventDefault(); this.player.switchWeapon(); }
       // 点击画面 = 回到鼠标视角
@@ -137,7 +142,7 @@ export class Game {
       else if (!this.locked && !this.tacmap?.open) this.requestLock();
     });
     window.addEventListener('mouseup', (e) => {
-      if (e.button === 0) { this.input.lmb = false; this.input.lmbHeld = false; }
+      if (e.button === 0) { this.input.lmb = false; }
       if (e.button === 2) this.input.rmb = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1055,9 +1060,8 @@ export class Game {
     for (const b of this.beats) {
       if (!b.done && this.missionTime >= b.t) { b.done = true; b.fn(); }
     }
-    if (this.input.lmb) this.input.lmbHeld = true;
-
     this.player.update(dt, this.input);
+    this.input.lmbPressed = false;   // 沿信号只对本次 update 有效
     /* 调参面板的「冻结敌人 AI」开关：只跳过非玩家角色，玩家手感不受影响 */
     if (!feel.debug.freezeAI) {
       for (const a of this.actors) {

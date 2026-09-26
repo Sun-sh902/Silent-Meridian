@@ -43,7 +43,7 @@ const data = await page.evaluate(() => {
 
   const reset = () => {
     g.input.keys.clear();
-    g.input.lmb = false; g.input.rmb = false; g.input.lmbHeld = false;
+    g.input.lmb = false; g.input.rmb = false; g.input.lmbPressed = false;
     P.pos.x = 0; P.pos.z = 0; P.yaw = 0; P.pitch = 0;
     P.ads = 0; P.reloading = 0; P.fireCd = 0; P.burstCount = 0;
     P.recoil.pitch = 0; P.recoil.yaw = 0;
