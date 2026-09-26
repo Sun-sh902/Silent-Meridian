@@ -22,6 +22,9 @@ const check = (name, ok, detail) => suite.check(name, ok, detail);
 
 await page.goto('http://127.0.0.1:8215/?deploy=1&test=1', { waitUntil: 'load' });
 await wait(2600);
+/* 全程固定步长：避免真实 rAF 帧在「派发 mousedown」与「手动 advance」之间
+   偷跑一帧并消费掉按下沿信号（曾导致 P0-2 用例间歇性失败）。 */
+await page.evaluate(() => { window.__game.testMode = true; });
 
 /* ---------------- P0-1 移动清场：连下 3 次并等队员到位 ---------------- */
 const t1 = await page.evaluate(() => {
@@ -48,7 +51,6 @@ const t1 = await page.evaluate(() => {
   }
   g.squadOrder = 'hold';
   g.squadWaypoint = null;
-  g.testMode = false;
   return { err, steps, orders, stoppedAt };
 });
 check('P0-1 连下 3 次「移动清场」并推进到队员到位，不抛异常',
@@ -128,7 +130,6 @@ const t3 = await page.evaluate(() => {
   };
   g.input.keys.clear();
   g.setCursorMode(false);
-  g.testMode = false;
   return res;
 });
 await page.keyboard.up('KeyD');
@@ -142,6 +143,7 @@ check('P0-3 Alt 光标模式下 D 不弹出调试面板', t3.panelOpen === false
    —— 直接调 advance() 会绕过 loop() 里的 ts=0，测不出冻结 */
 const t4a = await page.evaluate(() => {
   const g = window.__game;
+  g.testMode = false;         // 只能用真实主循环验证「是否冻结」
   g.togglePause(true);
   const afterPause = g.paused;
   g.abort();
