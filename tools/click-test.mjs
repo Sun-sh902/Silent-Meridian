@@ -2,60 +2,33 @@
    tools/click-test.mjs — 用真实 Chrome 验证界面按钮是否真的可点
    用法： node tools/click-test.mjs
    ============================================================ */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { join } from 'node:path';
+import { Suite, ROOT as root } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
-
-const server = http.createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url, 'http://localhost');
-    let p = decodeURIComponent(url.pathname);
-    if (p === '/') p = '/index.html';
-    const file = join(root, normalize(p).replace(/^(\.\.[/\\])+/, ''));
-    if (!existsSync(file)) { res.writeHead(404); res.end('not found'); return; }
-    const body = await readFile(file);
-    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
-    res.end(body);
-  } catch (e) { res.writeHead(500); res.end(String(e)); }
-});
-await new Promise((r) => server.listen(8199, '127.0.0.1', r));
-
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
+const suite = new Suite('click-test');
+const server = await suite.serve({ port: 8199 });
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox', '--allow-file-access-from-files'],
   defaultViewport: { width: 1440, height: 900 },
 });
 
-const errors = [];
-const results = [];
-let failures = 0;
+const results = suite.results;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 async function step(name, fn) {
   try {
     const detail = await fn();
-    results.push({ name, ok: true, detail: detail || '' });
+    suite.check(name, true, detail || '');
   } catch (e) {
-    failures++;
-    results.push({ name, ok: false, detail: e.message });
+    suite.check(name, false, e.message);
   }
 }
 
 async function newPage() {
-  const page = await browser.newPage();
-  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-  page.on('response', (r) => { if (r.status() >= 400) errors.push('HTTP ' + r.status() + ' ' + r.url()); });
-  return page;
+  return suite.newPage();   // 页面异常由 Suite 统一收集并计入失败
 }
 
 /** 点击并回报命中信息：命中自己才算真的点到了 */
@@ -127,9 +100,20 @@ await step('点「进入港区」部署', async () => {
   return `state=${st.state}`;
 });
 
-await step('部署后指针处于锁定状态（说明必须走 Alt 才能点按钮）', async () => {
+await step('指针锁定下点击不会穿透到 HUD 按钮', async () => {
+  const before = await page.evaluate(() => window.__game.squadOrder);
   const locked = await page.evaluate(() => !!document.pointerLockElement);
-  return locked ? '锁定中（符合预期）' : '未锁定（浏览器未授予指针锁）';
+  await page.click('#command-bar .cmd[data-order="hold"]');
+  await wait(350);
+  const after = await page.evaluate(() => window.__game.squadOrder);
+  if (locked) {
+    // 锁定期间点击被投递给画布，指令不应生效（这正是需要 Alt 的原因）
+    assert(after === before, '指针锁定下点击竟然穿透到了 HUD：' + before + ' -> ' + after);
+  } else {
+    // 浏览器未授予指针锁时，点击应当直接生效
+    assert(after === 'hold', '未锁定指针时点击应当生效，实际 ' + after);
+  }
+  return 'locked=' + locked + '，指令 ' + before + ' -> ' + after;
 });
 
 await step('按 Alt 释放鼠标 → 光标模式', async () => {
@@ -262,8 +246,7 @@ if (existsSync(distPath)) {
   });
   await p2.close();
 } else {
-  failures++;
-  results.push({ name: '单文件版测试', ok: false, detail: '缺少 dist/silent-meridian.html，请先 node build.mjs' });
+  suite.check('单文件版测试', false, '缺少 dist/silent-meridian.html，请先 node build.mjs');
 }
 
 /* ============ 场景 C：index.html 直接用 file:// 打开（用户报错的那条路径） ============ */
@@ -326,12 +309,4 @@ const indexPath = join(root, 'index.html');
   await p3.close();
 }
 
-console.log('\n===== 界面按钮点击测试 =====');
-for (const r of results) console.log(`${r.ok ? '✓ PASS' : '✗ FAIL'}  ${r.name}${r.detail ? '  —  ' + r.detail : ''}`);
-const realErrors = errors.filter((e) => !/favicon/i.test(e));
-console.log('\n控制台错误：', realErrors.length ? realErrors.slice(0, 6) : '（无）');
-console.log(`\n合计 ${results.length - failures}/${results.length} 通过`);
-
-await browser.close();
-server.close();
-process.exit(failures ? 1 : 0);
+await suite.finish();

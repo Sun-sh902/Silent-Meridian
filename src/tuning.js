@@ -58,7 +58,7 @@ export class TuningPanel {
       '<div class="tp-body"><div class="tp-groups"></div>',
       '<div class="tp-right"><canvas id="tp-curves" width="300" height="260"></canvas>',
       '<div id="tp-readout" class="tp-readout"></div></div></div>',
-      '<div class="tp-text" id="tp-text"></div>',
+      '<textarea class="tp-text" id="tp-text" readonly spellcheck="false"></textarea>',
     ].join('');
     document.body.appendChild(p);
     this.el = p;

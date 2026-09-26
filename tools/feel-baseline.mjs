@@ -6,34 +6,18 @@
      node tools/feel-baseline.mjs capture tools/feel-baseline.json
      node tools/feel-baseline.mjs compare tools/feel-baseline.json
    ============================================================ */
-import http from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { join } from 'node:path';
+import { Suite, ROOT as root } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer(async (req, res) => {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (p === '/') p = '/index.html';
-  const f = join(root, normalize(p));
-  if (!existsSync(f)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(8209, '127.0.0.1', r));
-
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+const suite = new Suite('feel-baseline');
+const server = await suite.serve({ port: 8209 });
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
   defaultViewport: { width: 1280, height: 720 },
 });
-const page = await browser.newPage();
-const errors = [];
-page.on('pageerror', (e) => errors.push(e.message));
+const page = await suite.newPage();
 /* 固定随机序列：水平后坐力等处使用 Math.random，必须可复现 */
 await page.evaluateOnNewDocument(() => {
   let seed = 0x2f6e2b1;
@@ -202,6 +186,8 @@ if (mode === 'capture') {
   await writeFile(file, JSON.stringify(data, null, 2), 'utf8');
   console.log('已采集基线 -> ' + file);
   console.log(JSON.stringify(data, null, 2));
+  suite.check('采集期间页面无异常', suite.pageErrors.length === 0, suite.pageErrors.slice(0, 2).join(' | '));
+  await suite.finish();
 } else {
   const old = JSON.parse(await readFile(file, 'utf8'));
   const diffs = [];
@@ -233,10 +219,6 @@ if (mode === 'capture') {
     console.log('[FAIL] 发现 ' + diffs.length + ' 处差异：');
     diffs.slice(0, 40).forEach((d) => console.log('   ' + d));
   }
-  await browser.close(); server.close();
-  process.exit(diffs.length ? 1 : 0);
+  suite.check('手感指标与基线逐位一致', diffs.length === 0, diffs.slice(0, 3).join(' | '));
+  await suite.finish();   // 页面异常在这里一并计入退出码（原先的打印在 exit 之后，永远不可达）
 }
-
-if (errors.length) console.log('页面错误：', errors.slice(0, 3));
-await browser.close();
-server.close();

@@ -264,3 +264,4 @@ export function exportFeelJSON() { return JSON.stringify(feel, null, 2); }
 
 /* 暴露到全局：调参面板与控制台都可直接读写 */
 if (typeof window !== 'undefined') window.__feel = feel;
+if (typeof window !== 'undefined') window.__feelSchema = FEEL_SCHEMA;   // 供调参面板/测试对账

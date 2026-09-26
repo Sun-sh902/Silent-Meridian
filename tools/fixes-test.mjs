@@ -6,35 +6,16 @@
      4) 地图：敌人=橙点、事件=黄点、主角与队友=蓝
    用法： node tools/fixes-test.mjs
    ============================================================ */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { Suite } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer(async (req, res) => {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (p === '/') p = '/index.html';
-  const f = join(root, normalize(p));
-  if (!existsSync(f)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(8204, '127.0.0.1', r));
-
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+const suite = new Suite('fixes-test');
+const server = await suite.serve({ port: 8204 });
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox', '--autoplay-policy=no-user-gesture-required'],
   defaultViewport: { width: 1440, height: 900 },
 });
-const page = await browser.newPage();
-const errors = [];
-page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon/i.test(m.text())) errors.push(m.text()); });
+const page = await suite.newPage();
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const frames = (n = 2) => page.evaluate((k) => new Promise((res) => {
@@ -42,12 +23,8 @@ const frames = (n = 2) => page.evaluate((k) => new Promise((res) => {
   const step = () => { if (++i >= k) res(); else requestAnimationFrame(step); };
   requestAnimationFrame(step);
 }), n);
-let failures = 0;
-const results = [];
-function check(name, ok, detail) {
-  if (!ok) failures++;
-  results.push({ name, ok, detail: detail === undefined ? '' : String(detail) });
-}
+const results = suite.results;
+const check = (name, ok, detail) => suite.check(name, ok, detail);
 
 /* ============ 1. 备战界面环境声 ============ */
 await page.goto('http://127.0.0.1:8204/', { waitUntil: 'load' });
@@ -188,11 +165,4 @@ const off = await page.evaluate(() => {
 check('返回主菜单：环境声已停止', off.rain === false && off.ambience === false,
   `rainNodes=${off.rain} ambience=${off.ambience}`);
 
-console.log('\n===== 四个 Bug 专项验收 =====');
-for (const r of results) console.log(`${r.ok ? '✓ PASS' : '✗ FAIL'}  ${r.name}${r.detail ? '  —  ' + r.detail : ''}`);
-console.log('\n控制台错误：', errors.length ? errors.slice(0, 5) : '（无）');
-console.log(`\n合计 ${results.length - failures}/${results.length} 通过`);
-
-await browser.close();
-server.close();
-process.exit(failures ? 1 : 0);
+await suite.finish();
