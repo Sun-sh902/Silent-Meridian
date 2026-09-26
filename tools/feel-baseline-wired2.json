@@ -1,0 +1,102 @@
+{
+  "move": {
+    "walk": {
+      "speed": 3.1,
+      "fov": 72,
+      "ads": 0
+    },
+    "sprint": {
+      "speed": 4.805,
+      "fov": 82,
+      "ads": 0
+    },
+    "crouch": {
+      "speed": 1.612,
+      "fov": 72,
+      "ads": 0
+    },
+    "ads": {
+      "speed": 1.705,
+      "fov": 46.000001,
+      "ads": 1
+    },
+    "diag": {
+      "speed": 3.1,
+      "fov": 72,
+      "ads": 0
+    },
+    "back": {
+      "speed": 3.1,
+      "fov": 72,
+      "ads": 0
+    }
+  },
+  "ramp": {
+    "perStep": [
+      3.1,
+      3.1,
+      3.1,
+      3.1,
+      3.1,
+      3.1
+    ],
+    "afterRelease": 0
+  },
+  "camera": {
+    "rollMax": 0.012,
+    "bobY": 0.027997
+  },
+  "spread": {
+    "shots": 30,
+    "first": 0.02833333,
+    "last": 0.20089255
+  },
+  "recoil": {
+    "pitchAfter": [
+      0.16,
+      0.32,
+      0.48,
+      0.8,
+      1.28,
+      2.08
+    ],
+    "yawSeq": [
+      -0.0083487,
+      -0.0151464,
+      0.00625708,
+      0.01957591,
+      0.01539807
+    ],
+    "decay": {
+      "start": 0.8,
+      "afterOneSecond": 0.00072951
+    }
+  },
+  "reload": {
+    "seconds": 2.366667,
+    "magAfter": 30,
+    "switchSeconds": 0.35,
+    "switched": true,
+    "adsInSeconds": 0.15,
+    "adsOutSeconds": 0.133333
+  },
+  "feedback": {
+    "shakeStart": 0.28,
+    "shakeAfterHalfSecond": 0.008455,
+    "muzzleTimer": 0.05,
+    "hitmarkerTime": 0
+  },
+  "meta": {
+    "randCalls": 189251,
+    "armorSpeed": 1,
+    "armorHp": 120,
+    "weapon": "mr4",
+    "rpm": 640,
+    "range": 120,
+    "spread": 0.01,
+    "adsSpread": 0.0035,
+    "moveSpread": 0.02,
+    "reloadTime": 2.35,
+    "damage": 24
+  }
+}

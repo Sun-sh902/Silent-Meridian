@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>寂静子午线 · THE SILENT MERIDIAN — 行动 01「雨幕」</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23070d13'/%3E%3Cpath d='M16 5l9 11-9 11-9-11z' fill='%2354d6c6'/%3E%3C/svg%3E" />
+<!-- 版本号 v=1.0.1：每次改动需递增，并与下方 bootstrap 里的 V 常量保持一致（build.mjs 会校验） -->
+<link rel="stylesheet" href="./styles/ui.css?v=1.1.0" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js?v=1.1.0"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="app">
+  <!-- ===================== 3D VIEWPORT ===================== -->
+  <canvas id="view"></canvas>
+  <div id="grade"></div>
+  <div id="whiteout"></div>
+  <div id="vignette"></div>
+  <div id="damage-flash"></div>
+  <div id="rain-glass"></div>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" class="hidden">
+
+    <div id="hud-top">
+      <div id="objective-panel" class="panel">
+        <div class="panel-title">
+          <span class="tag">OPERATION 01</span>
+          <span class="codename">雨幕 / RAIN VEIL</span>
+        </div>
+        <ul id="objective-list"></ul>
+      </div>
+
+      <div id="compass-wrap">
+        <canvas id="compass" width="720" height="58" aria-label="罗盘"></canvas>
+        <div id="compass-readout">
+          <span id="bearing-text">N</span>
+          <span id="bearing-deg">000</span>
+        </div>
+      </div>
+
+      <div id="hud-right">
+        <div id="status-panel" class="panel">
+          <div class="stat-row"><span class="k">时钟 / CLOCK</span><span class="v" id="clock">23:41</span></div>
+          <div class="stat-row"><span class="k">交战状态</span><span class="v" id="alert-state">安静</span></div>
+          <div class="stat-row"><span class="k">已识别</span><span class="v" id="id-count">0 / 0</span></div>
+          <div class="stat-row"><span class="k">平民</span><span class="v" id="civ-count">0 / 0</span></div>
+        </div>
+        <div id="mini-map"><canvas id="minimap" width="220" height="220" aria-label="小地图"></canvas></div>
+      </div>
+    </div>
+
+    <div id="hud-mid">
+      <div id="radio-feed"></div>
+      <div id="observe-banner" class="hidden">
+        <div class="ob-label">战术暂停 / TACTICAL PAUSE</div>
+        <div class="ob-sub">时间已减慢 — 观察、指挥、再动手</div>
+      </div>
+      <div id="log"></div>
+    </div>
+
+    <div id="hud-bottom">
+      <div id="squad-panel">
+        <div id="squad-order-chip">
+          <span class="so-label">当前指令</span>
+          <span class="so-value" id="order-name">编队跟随</span>
+        </div>
+        <div id="squad-list"></div>
+        <div id="command-bar">
+          <div class="cmd" data-action="order" data-order="follow"><b>1</b><span>跟随</span><i>FOLLOW</i></div>
+          <div class="cmd" data-action="order" data-order="hold"><b>2</b><span>待命</span><i>HOLD</i></div>
+          <div class="cmd" data-action="order" data-order="clear"><b>3</b><span>移动清场</span><i>CLEAR</i></div>
+          <div class="cmd wide" data-action="order" data-order="regroup"><b>4</b><span>归队</span><i>REGROUP</i></div>
+        </div>
+        <div id="cursor-hint">按 <b>Alt</b> 释放鼠标，即可点击上面的指令按钮</div>
+      </div>
+
+      <div id="hud-bottom-center">
+        <div id="subtitle"></div>
+        <div id="hint-bar">WASD 移动 · 鼠标观察 · <b>右键</b> 瞄准 · <b>空格</b> 战术暂停 · <b>1/2/3</b> 指令 · <b>E</b> 互动 · <b>R</b> 换弹 · <b>G</b> 投掷 · <b>F</b> 战术灯 · <b>Tab</b> 战术地图 · <b>Alt</b> 释放鼠标</div>
+      </div>
+
+      <div id="weapon-panel" class="panel">
+        <div class="wp-name" id="wp-name">VANTOR MR-4</div>
+        <div class="wp-ammo">
+          <span id="wp-mag">30</span><em>/</em><span id="wp-reserve" class="reserve">120</span>
+        </div>
+        <div class="wp-meta">
+          <span id="wp-mode">AUTO</span>
+          <span id="wp-gadget">闪光弹 ×2</span>
+        </div>
+        <div class="wp-reload hidden" id="wp-reload">换弹中…</div>
+      </div>
+    </div>
+
+    <!-- 准星集群：必须锁定在视口正中（与瞄准射线一致），
+         故整体绝对居中；内部用 grid/flex 排列，彼此不会重叠。 -->
+    <div id="center-stack">
+      <div id="reticle">
+        <div class="reticle-ring"></div>
+        <div class="reticle-dot"></div>
+        <div class="reticle-tick t-t"></div>
+        <div class="reticle-tick t-b"></div>
+        <div class="reticle-tick t-l"></div>
+        <div class="reticle-tick t-r"></div>
+        <svg id="observe-ring" viewBox="0 0 100 100">
+          <circle class="bg" cx="50" cy="50" r="42"></circle>
+          <circle class="fg" cx="50" cy="50" r="42"></circle>
+        </svg>
+        <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
+      </div>
+      <div id="center-below">
+        <div id="target-card" class="hidden">
+          <div class="tc-top">
+            <span id="tc-class">UNKNOWN CONTACT</span>
+            <span id="tc-range">-- m</span>
+          </div>
+          <div class="tc-bar"><i id="tc-ident"></i></div>
+          <div class="tc-note" id="tc-note">持续观察以确认目标 · HOLD TO IDENTIFY</div>
+        </div>
+        <div id="prompt" class="hidden"><b>E</b><span id="prompt-text"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== TACTICAL MAP ===================== -->
+  <div id="tacmap" class="hidden">
+    <div class="tm-frame">
+      <div class="tm-head">
+        <div class="tm-title">战术地图 <span>TACTICAL MAP</span></div>
+        <div class="tm-legend">
+          <span><i class="sw self"></i>你 / 队友（蓝）</span>
+          <span><i class="sw suspect"></i>敌人（橙点）</span>
+          <span><i class="sw event"></i>事件（黄点）</span>
+          <span><i class="sw civ"></i>平民（绿）</span>
+          <span><i class="sw obj"></i>任务点（琥珀菱形）</span>
+          <span><i class="sw unknown"></i>未识别（灰 ?）</span>
+        </div>
+      </div>
+      <canvas id="tacmap-canvas" width="1280" height="860"></canvas>
+      <div class="tm-foot">
+        <span>左键：放置小队航点（移动清场）</span>
+        <span>右键：放置队长航点</span>
+        <span>双击：清除航点</span>
+        <span class="tm-close">TAB 返回</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREENS ===================== -->
+  <div id="screen-title" class="screen">
+    <div class="title-bg"></div>
+    <div class="title-content">
+      <div class="brand-line">
+        <span class="brand-mark">◈</span>
+        <span>MERIDIAN PORT AUTHORITY · 子午线港务局</span>
+      </div>
+      <h1>
+        <span class="zh">寂静子午线</span>
+        <span class="en">THE SILENT MERIDIAN</span>
+      </h1>
+      <div class="subtitle">战术警备模拟 · 行动 01「雨幕」</div>
+      <div class="title-divider"></div>
+      <p class="blurb">
+        23:41。暴雨封锁了子午线港三号泊位。调度室失去联络，一份货单在混乱中失踪，
+        持械人员在仓区游荡。你是这支四人警备小组的队长——
+        在这条子午线上，先看清，再下令。
+      </p>
+      <div class="title-actions">
+        <button class="btn primary" id="btn-briefing" data-action="screen" data-screen="briefing">行动简报 <em>BRIEFING</em></button>
+        <button class="btn" id="btn-loadout" data-action="screen" data-screen="loadout">装备配置 <em>LOADOUT</em></button>
+        <button class="btn" id="btn-controls" data-action="help-open">操作说明 <em>CONTROLS</em></button>
+      </div>
+      <div class="title-foot">
+        <span>原创虚构港口 · 虚构机构与品牌</span>
+        <span id="build-tag">BUILD 1.1.0 · canvas/WebGL</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-briefing" class="screen hidden">
+    <div class="doc">
+      <div class="doc-head">
+        <div>
+          <div class="doc-kicker">机密 · MERIDIAN PORT AUTHORITY 战术警备处</div>
+          <h2>行动简报：雨幕</h2>
+        </div>
+        <div class="doc-stamp">OPERATION<br><b>01</b></div>
+      </div>
+      <div class="doc-grid">
+        <section>
+          <h3>态势 <em>SITUATION</em></h3>
+          <p>
+            23:41，子午线港三号泊位。暴雨导致港区照明与通讯降级，调度室在 22:58 之后失联。
+            自动门禁记录显示，三辆无标识货柜车在 23:12 未经登记进入仓区。
+            码头值守报告听到争执与一声疑似枪响后通讯中断。
+          </p>
+          <p>
+            情报判定有一支小型武装团伙在现场活动，目的与一批被扣押的货单有关。
+            港区内仍有夜班工人未撤离，至少三人失联。
+          </p>
+        </section>
+        <section>
+          <h3>任务 <em>MISSION</em></h3>
+          <ol class="obj-list">
+            <li><div><b>主要 · 找回货单</b><span>在三号仓（BAY 3）办公室内取回被藏的货运清单。</span></div></li>
+            <li><div><b>主要 · 搜集调度室证据</b><span>进入港区调度楼，提取监控与登记记录。</span></div></li>
+            <li><div><b>主要 · 保护平民</b><span>接触夜班工人并护送其至南门集结点。</span></div></li>
+            <li><div><b>次要 · 处理武装嫌疑人</b><span>优先劝降后拘押（靠近后按 E）。拘押优于击毙。</span></div></li>
+            <li><div><b>撤离</b><span>完成情报回收后返回南门装甲车。</span></div></li>
+          </ol>
+        </section>
+        <section class="span2">
+          <h3>交战规则 <em>ROE / 关键提示</em></h3>
+          <div class="roe">
+            <div class="roe-item">
+              <b>先观察，再下令</b>
+              <p>雨幕中无法从轮廓分辨平民与持械者。按住 <kbd>空格</kbd> 进入战术暂停，
+              用准星持续压住目标完成识别（目标卡进度条满格）。识别前开火将计入「盲射」并扣分。</p>
+            </div>
+            <div class="roe-item">
+              <b>三条小队指令</b>
+              <p><kbd>1</kbd> 编队跟随 — 小队按楔形队形随你推进。
+              <kbd>2</kbd> 原地待命 — 小队停下并看守当前朝向。
+              <kbd>3</kbd> 移动清场 — 小队交替掩护前进至你的准星落点并清空该区域。</p>
+            </div>
+            <div class="roe-item">
+              <b>火力纪律</b>
+              <p>小队默认只在受威胁或收到「移动清场」指令时开火，其余情况会先报告。
+              误伤平民将直接判定任务失败条件。</p>
+            </div>
+            <div class="roe-item">
+              <b>撤离</b>
+              <p>取回货单与证据后，南门会出现 <span class="hl">RTB</span> 撤离点。小队必须全员在场。</p>
+            </div>
+          </div>
+        </section>
+        <section>
+          <h3>环境 <em>ENVIRONMENT</em></h3>
+          <ul class="kv">
+            <li><span>天气</span><b>暴雨 · 能见度 46m</b></li>
+            <li><span>时刻</span><b>23:41 — 夜</b></li>
+            <li><span>照明</span><b>降级 · 局部供电</b></li>
+            <li><span>地形</span><b>集装箱堆场 / 三号仓 / 调度楼</b></li>
+          </ul>
+        </section>
+        <section>
+          <h3>情报批注 <em>INTEL NOTES</em></h3>
+          <ul class="notes">
+            <li>监听记录中出现陌生呼号「<b>白鹭</b>」。身份不明，疑似现场指挥。</li>
+            <li>目标倾向于劫持人质换取货单，切勿让其察觉包围。</li>
+            <li>集装箱编号已导入战术地图（<kbd>Tab</kbd>）。</li>
+          </ul>
+        </section>
+      </div>
+      <div class="doc-foot">
+        <button class="btn ghost" data-action="screen" data-screen="title">← 返回</button>
+        <div class="spacer"></div>
+        <span class="auth">签发：港务局战术警备处 · 值班调度 K. 里德</span>
+        <button class="btn primary" data-action="screen" data-screen="loadout">装备配置 →</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-loadout" class="screen hidden">
+    <div class="doc">
+      <div class="doc-head">
+        <div>
+          <div class="doc-kicker">行动前配置 · 子午线港战术警备处</div>
+          <h2>装备配置</h2>
+        </div>
+        <div class="doc-stamp alt">LOAD<br><b>OUT</b></div>
+      </div>
+
+      <div class="load-grid">
+        <div class="load-col">
+          <h3>主武器 <em>PRIMARY</em></h3>
+          <div id="primary-list" class="pick-list"></div>
+        </div>
+        <div class="load-col">
+          <h3>副武器 <em>SIDEARM</em></h3>
+          <div id="sidearm-list" class="pick-list"></div>
+        </div>
+        <div class="load-col">
+          <h3>战术器材 <em>GADGET / 键位 G</em></h3>
+          <div id="gadget-list" class="pick-list"></div>
+        </div>
+        <div class="load-col">
+          <h3>防护 <em>ARMOR</em></h3>
+          <div id="armor-list" class="pick-list"></div>
+        </div>
+      </div>
+
+      <div class="load-bottom">
+        <div class="stat-block">
+          <h3>队长能力 <em>OPERATOR PROFILE</em></h3>
+          <div id="stat-bars"></div>
+        </div>
+        <div class="squad-block">
+          <h3>警备小组 <em>SQUAD · 4</em></h3>
+          <div id="squad-roster"></div>
+        </div>
+      </div>
+
+      <div class="doc-foot">
+        <button class="btn ghost" data-action="screen" data-screen="briefing">← 返回简报</button>
+        <div class="spacer"></div>
+        <span class="auth">配置将影响机动、火力与观察效率</span>
+        <button class="btn primary" id="btn-deploy" data-action="deploy">进入港区 →</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-debrief" class="screen hidden">
+    <div class="doc debrief">
+      <div class="doc-head">
+        <div>
+          <div class="doc-kicker">行动结束 · 事后评估</div>
+          <h2 id="debrief-title">行动完成</h2>
+        </div>
+        <div class="doc-stamp" id="grade-stamp">A</div>
+      </div>
+      <div class="debrief-grid">
+        <div class="debrief-main">
+          <h3>任务目标 <em>OBJECTIVES</em></h3>
+          <ul id="debrief-objectives" class="obj-list result"></ul>
+          <h3>行动统计 <em>STATISTICS</em></h3>
+          <div id="debrief-stats" class="stat-grid"></div>
+        </div>
+        <div class="debrief-side">
+          <h3>人员 <em>PERSONNEL</em></h3>
+          <div id="debrief-squad" class="roster-result"></div>
+          <div id="debrief-comment" class="comment"></div>
+        </div>
+      </div>
+      <div class="doc-foot">
+        <button class="btn ghost" data-action="screen" data-screen="title">返回主菜单</button>
+        <div class="spacer"></div>
+        <button class="btn" id="btn-retry" data-action="retry">重试行动 ↺</button>
+        <button class="btn primary" data-action="screen" data-screen="loadout">调整装备 →</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-help" class="screen hidden">
+    <div class="doc help">
+      <div class="doc-head">
+        <div>
+          <div class="doc-kicker">战术警备处 · 操作手册</div>
+          <h2>操作说明</h2>
+        </div>
+        <div class="doc-stamp alt">SOP<br><b>01</b></div>
+      </div>
+      <div class="help-grid">
+        <div class="help-col">
+          <h3>移动与观察</h3>
+          <ul class="keys">
+            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>移动（行走）</span></li>
+            <li><kbd>Shift</kbd><span>疾行（武器下落，识别变慢）</span></li>
+            <li><kbd>Ctrl</kbd><span>潜行（噪音最低）</span></li>
+            <li><kbd>鼠标</kbd><span>环视</span></li>
+            <li><kbd>右键</kbd><span>举枪瞄准（观察效率提升）</span></li>
+            <li><kbd>滚轮</kbd><span>切换主/副武器</span></li>
+          </ul>
+        </div>
+        <div class="help-col">
+          <h3>指挥</h3>
+          <ul class="keys">
+            <li><kbd>空格</kbd><span>战术暂停：时间减慢，可自由观察与下令</span></li>
+            <li><kbd>1</kbd><span>编队跟随 FOLLOW</span></li>
+            <li><kbd>2</kbd><span>原地待命 HOLD</span></li>
+            <li><kbd>3</kbd><span>移动清场 CLEAR（至准星落点）</span></li>
+            <li><kbd>4</kbd><span>归队 REGROUP</span></li>
+            <li><kbd>Tab</kbd><span>战术地图（可放置航点）</span></li>
+            <li><kbd>Q</kbd><span>对单名队员下令（看向该队员时）</span></li>
+            <li><kbd>Alt</kbd><span>释放鼠标：可用鼠标点击 HUD 指令按钮与地图（点击画面恢复视角）</span></li>
+          </ul>
+        </div>
+        <div class="help-col">
+          <h3>战斗</h3>
+          <ul class="keys">
+            <li><kbd>左键</kbd><span>射击</span></li>
+            <li><kbd>R</kbd><span>换弹</span></li>
+            <li><kbd>G</kbd><span>投掷战术器材</span></li>
+            <li><kbd>F</kbd><span>战术灯开关（更远观察 / 更易暴露）</span></li>
+            <li><kbd>E</kbd><span>互动 / 拘押 / 护送 / 拾取</span></li>
+            <li><kbd>M</kbd><span>静音开关</span></li>
+            <li><kbd>Esc</kbd><span>暂停菜单</span></li>
+          </ul>
+        </div>
+      </div>
+      <div class="doc-foot">
+        <button class="btn primary" id="btn-help-close" data-action="help-close">明白了</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-pause" class="screen overlay hidden">
+    <div class="pause-card">
+      <h2>已暂停</h2>
+      <p>子午线港 · 三号泊位 · 23:41</p>
+      <button class="btn primary" id="btn-resume" data-action="resume">继续行动</button>
+      <button class="btn" id="btn-restart" data-action="restart">重新开始</button>
+      <button class="btn ghost" id="btn-abort" data-action="abort">中止并返回主菜单</button>
+    </div>
+  </div>
+
+  <div id="boot-error" class="screen hidden">
+    <div class="pause-card">
+      <h2>加载失败</h2>
+      <p id="boot-error-text"></p>
+    </div>
+  </div>
+</div>
+
+<!-- SM:BOOTSTRAP -->
+<!-- ============================================================
+     引导脚本（经典脚本，不是 module）
+     1) file:// 打开时自动改用打包好的经典脚本
+        （type="module" 在 file:// 下会被 CORS 拦截，整页 JS 不会执行）
+     2) 提供 window.__SM_DEBUG 调试面板：按 D（或 ~）唤出
+     3) 用事件委托统计所有 [data-action] 点击
+     本脚本不依赖任何外部文件，因此永远会执行。
+     ============================================================ -->
+<script>
+(function () {
+  var V = '1.1.0';                 // ← 版本号：改动后递增，并与 ui.css 的 ?v= 保持一致
+  var isFile = location.protocol === 'file:';
+  var dbg = window.__SM_DEBUG = {
+    version: V,
+    booted: true,
+    bootedAt: new Date(),
+    protocol: location.protocol,
+    loader: isFile ? 'classic (IIFE)' : 'module (ESM)',
+    mainLoaded: false,
+    mainError: null,
+    handlerReady: false,
+    actions: [],
+    clicks: [],
+    panel: null,
+  };
+  dbg.clickCount = 0;
+
+  /* ---------------- 事件委托：统计可点击元素与最近点击 ---------------- */
+  function container() { return document.getElementById('app') || document.body; }
+  function record(e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!el) return;
+    dbg.clickCount++;
+    dbg.clicks.unshift({
+      at: new Date(),
+      action: el.dataset.action,
+      detail: el.dataset.screen || el.dataset.order || el.dataset.slot || '',
+      tag: el.tagName.toLowerCase(),
+    });
+    if (dbg.clicks.length > 5) dbg.clicks.pop();
+    if (dbg.panel && !dbg.panel.classList.contains('hidden')) render();
+  }
+  function attach() { container().addEventListener('click', record, true); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
+  else attach();
+
+  /* 兜底：若 2.5 秒后游戏脚本仍未接管（模块被拦、文件缺失等），
+     至少让界面切换仍然可用，方便判断问题出在哪一层。 */
+  function installFallback() {
+    if (dbg.handlerReady) return;
+    dbg.fallbackActive = true;
+    container().addEventListener('click', function (e) {
+      var el = e.target.closest ? e.target.closest('[data-action="screen"]') : null;
+      if (!el || dbg.handlerReady) return;
+      e.preventDefault();
+      var name = el.dataset.screen;
+      ['title', 'briefing', 'loadout', 'debrief', 'help', 'pause'].forEach(function (s) {
+        var n = document.getElementById('screen-' + s);
+        if (n) n.classList.toggle('hidden', s !== name);
+      });
+      var hud = document.getElementById('hud');
+      if (hud) hud.classList.add('hidden');
+    }, true);
+  }
+  setTimeout(installFallback, 2500);
+
+  /* ---------------- 调试面板 ---------------- */
+  function buildPanel() {
+    if (dbg.panel) return dbg.panel;
+    var p = document.createElement('div');
+    p.id = 'debug-panel';
+    p.className = 'hidden';
+    p.innerHTML =
+      '<div class="dbg-head"><span>SM DEBUG · v' + V + '</span>' +
+      '<button type="button" data-dbg="close" title="关闭">×</button></div>' +
+      '<div class="dbg-body"></div>' +
+      '<div class="dbg-foot">按 <b>D</b> 开/关 · 游戏中按 <b>~</b> · 面板打开时会自动刷新</div>';
+    p.addEventListener('click', function (e) {
+      if (e.target.dataset && e.target.dataset.dbg === 'close') hide();
+    });
+    document.body.appendChild(p);
+    dbg.panel = p;
+    return p;
+  }
+  function line(k, v) {
+    return '<div class="dbg-row"><span>' + k + '</span><b>' + v + '</b></div>';
+  }
+  function render() {
+    var p = buildPanel();
+    var total = document.querySelectorAll('[data-action]').length;
+    var html = '';
+    html += line('脚本已执行', '<i class="ok">✓ 是</i> · ' + dbg.bootedAt.toLocaleTimeString() + '（引导脚本）');
+    html += line('打开方式', dbg.protocol + ' · ' + dbg.loader);
+    html += line('主脚本', dbg.mainLoaded
+      ? '<i class="ok">✓ 已加载</i>'
+      : (dbg.mainError ? '<i class="bad">✗ ' + dbg.mainError + '</i>' : '<i class="warn">… 加载中</i>'));
+    html += line('动作处理器', dbg.handlerReady
+      ? '<i class="ok">✓ 已注册</i> (' + dbg.actions.length + ' 个: ' + dbg.actions.join(' / ') + ')'
+      : '<i class="bad">✗ 未注册</i>（游戏脚本没有运行）');
+    html += line('页面按钮', total + ' 个 [data-action]');
+    html += line('指针锁定', document.pointerLockElement ? '<i class="warn">是</i>（点按钮前按 Alt）' : '否');
+    html += line('累计点击', dbg.clickCount + ' 次');
+    if (dbg.perf) {
+      var pf = dbg.perf, au = dbg.audio || {};
+      html += '<div class="dbg-sep">运行时性能 / 音频</div>';
+      html += line('帧率（含渲染）', pf.fps.toFixed(1) + ' fps · 最长帧间隔 ' + pf.worstGap.toFixed(0) + 'ms');
+      html += line('逻辑耗时 平均/峰值', pf.logicAvg.toFixed(2) + ' / ' + pf.logicMax.toFixed(1) + ' ms');
+      html += line('卡顿次数(>250ms)', pf.stalls + ' 次');
+      html += line('AudioContext 数量', (au.ctxCount === 1 ? '<i class="ok">1 ✓</i>' : '<i class="bad">' + au.ctxCount + ' ✗</i>'));
+      html += line('在用音频节点', (au.liveNodes || 0) + ' 个' + (au.gated ? '（抑制 ' + au.gated + ' 次重复）' : ''));
+      html += line('残留投掷物', (dbg.projectiles || 0) + ' 个');
+    }
+    html += '<div class="dbg-sep">最近一次点击事件</div>';
+    if (!dbg.clicks.length) html += line('—', '<i class="warn">尚无点击记录</i>');
+    dbg.clicks.forEach(function (c, i) {
+      html += line(i === 0 ? '最近' : '　', c.at.toLocaleTimeString() + ' · &lt;' + c.tag + '&gt; ' +
+        c.action + (c.detail ? '（' + c.detail + '）' : ''));
+    });
+    p.querySelector('.dbg-body').innerHTML = html;
+  }
+  function show() { buildPanel().classList.remove('hidden'); render(); }
+  function hide() { if (dbg.panel) dbg.panel.classList.add('hidden'); }
+  function toggle() { if (dbg.panel && !dbg.panel.classList.contains('hidden')) hide(); else show(); }
+  dbg.show = show; dbg.hide = hide; dbg.toggle = toggle; dbg.render = render;
+
+  document.addEventListener('keydown', function (e) {
+    if (e.repeat) return;
+    var locked = !!document.pointerLockElement;
+    var byD = e.code === 'KeyD' && !locked && !e.ctrlKey && !e.metaKey;
+    var byTilde = e.code === 'Backquote';
+    if (!byD && !byTilde) return;
+    e.preventDefault();
+    e.stopPropagation();                 // 防止 D 同时触发游戏中的右平移
+    toggle();
+  }, true);
+
+  /* ---------------- 脚本加载失败时的救援提示 ---------------- */
+  function rescue(msg) {
+    var el = document.getElementById('boot-error');
+    var t = document.getElementById('boot-error-text');
+    if (t) t.innerHTML = msg;
+    if (el) el.classList.remove('hidden');
+  }
+  dbg.rescue = rescue;
+
+  /* ---------------- 加载主脚本 ---------------- */
+  if (window.__SM_INLINE) {              // 单文件构建：游戏代码已内联，无需再加载
+    dbg.loader += ' + 内联';
+    return;
+  }
+  var s = document.createElement('script');
+  if (isFile) {
+    s.src = './dist/silent-meridian.js?v=' + V;   // 经典脚本，file:// 可用
+  } else {
+    s.type = 'module';
+    s.src = './src/main.js?v=' + V;
+  }
+  s.onerror = function () {
+    dbg.mainError = '加载失败';
+    rescue(
+      (isFile
+        ? '<b>file:// 模式缺少打包脚本。</b><br>请在本目录执行：<code>node build.mjs</code><br>'
+        : '<b>无法加载 ./src/main.js。</b><br>请启动本地服务器：<br><code>python3 -m http.server 8123</code><br>') +
+      '<br>然后访问 <code>' + (isFile ? 'file://…/index.html' : 'http://localhost:8123/') + '</code>' +
+      '<br><br>或直接打开 <code>dist/silent-meridian.html</code>（单文件，无需服务器）。'
+    );
+  };
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
