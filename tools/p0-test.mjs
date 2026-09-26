@@ -57,37 +57,48 @@ check('P0-1 连下 3 次「移动清场」并推进到队员到位，不抛异�
 check('P0-1 模拟未被异常中断（推进步数应为 720）', t1.steps === 720,
   'steps=' + t1.steps + '（被中断时为 ' + t1.stoppedAt + '）');
 
-/* ---------------- P0-2 非 AUTO 模式开火 ---------------- */
-const t2 = await page.evaluate(() => {
-  const g = window.__game;
-  const P = g.player;
-  g.testMode = true;
-  let innerErr = null;
-  const clickOnce = () => {
-    g.input.lmb = true;                 // 还原浏览器时序：mousedown 置 lmb，随后帧循环推进
+/* ---------------- P0-2 非 AUTO 模式开火（走真实鼠标事件） ---------------- */
+/* 关键：必须通过真实 mousedown 触发 canvas 处理器来置「按下沿」信号，
+   直接改 g.input.lmb 会绕过输入链路，测不出 P0-2 这类缺陷。 */
+async function fireOnceReal(setup) {
+  await page.evaluate((cfg) => {
+    const g = window.__game;
+    const P = g.player;
+    if (cfg.sidearm) { P.active = 'sidearm'; }
+    else { P.active = 'primary'; P.primaryDef = Object.assign({}, P.primaryDef, { mode: cfg.mode }); }
+    P.reloading = 0; P.fireCd = 0;
+    P.mag[P.active] = P.def.mag;
+    P.reserve[P.active] = 90;
+    cfg.tag;
+  }, setup);
+  /* 在 canvas 上派发真实 MouseEvent：走的是同一个 addEventListener 处理器，
+     但不受 Puppeteer 鼠标状态机影响，可重复执行。 */
+  await page.evaluate(() => {
+    document.getElementById('view')
+      .dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }));
+  });
+  const fired = await page.evaluate(() => {
+    const g = window.__game;
     const before = g.stats.shots;
-    try { g.advance(1 / 60, 1 / 60); } catch (e) { innerErr = String((e && e.message) || e); }
-    const fired = g.stats.shots - before;
-    g.input.lmb = false;
-    return fired;
-  };
-  const out = {};
-  P.active = 'sidearm'; P.reloading = 0; P.fireCd = 0;   // 真实默认副武器 KOVAR P9（SEMI）
-  P.mag.sidearm = P.sidearmDef.mag; P.reserve.sidearm = 60;
-  out.sidearmReal = { mode: P.def.mode, fired: clickOnce() };
-  for (const mode of ['AUTO', 'SEMI', 'PUMP', 'REVOLVER']) {
-    P.active = 'primary';
-    P.primaryDef = Object.assign({}, P.primaryDef, { mode });
-    P.reloading = 0; P.fireCd = 0; P.mag.primary = 30; P.reserve.primary = 150;
-    out[mode] = clickOnce();
-  }
-  g.testMode = false;
-  out.innerErr = innerErr;
-  return out;
-});
+    g.advance(1 / 60, 1 / 60);                   // 固定步长推进一帧
+    return g.stats.shots - before;
+  });
+  await page.evaluate(() => {
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
+  });
+  return fired;
+}
+
+const t2 = {
+  sidearmReal: { mode: 'SEMI', fired: await fireOnceReal({ sidearm: true }) },
+  AUTO: await fireOnceReal({ mode: 'AUTO' }),
+  SEMI: await fireOnceReal({ mode: 'SEMI' }),
+  PUMP: await fireOnceReal({ mode: 'PUMP' }),
+  REVOLVER: await fireOnceReal({ mode: 'REVOLVER' }),
+};
 check('P0-2 默认副武器 P9（SEMI）能打出子弹',
   t2.sidearmReal.fired >= 1,
-  'mode=' + t2.sidearmReal.mode + '，一次完整点击发数=' + t2.sidearmReal.fired);
+  'mode=' + t2.sidearmReal.mode + '，一次真实点击发数=' + t2.sidearmReal.fired);
 check('P0-2 AUTO 模式能打出子弹', t2.AUTO >= 1, '发数=' + t2.AUTO);
 check('P0-2 SEMI 模式能打出子弹', t2.SEMI >= 1, '发数=' + t2.SEMI);
 check('P0-2 PUMP 模式能打出子弹', t2.PUMP >= 1, '发数=' + t2.PUMP);

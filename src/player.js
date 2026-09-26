@@ -122,9 +122,9 @@ export class Player extends Actor {
     if (this.blind > 0) this.blind -= dt;
     const canFire = this.alive && this.reloading <= 0 && this.fireCd <= 0 && this.blind <= 0;
     const d = this.def;
-    if (input.lmb && canFire && !g.paused) {
+    if ((input.lmb || input.lmbPressed) && canFire && !g.paused) {
       if (d.mode === 'SEMI' || d.mode === 'REVOLVER' || d.mode === 'PUMP') {
-        if (!input.lmbHeld) this.fireOnce();
+        if (input.lmbPressed) this.fireOnce();   // 一次点击 = 一发
       } else {
         this.fireOnce();
       }
