@@ -4,7 +4,16 @@
   "description": "The Silent Meridian — 寂静子午线 战术警备模拟",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tools/run-all.mjs",
+    "build": "node build.mjs",
+    "test:click": "node tools/click-test.mjs",
+    "test:fixes": "node tools/fixes-test.mjs",
+    "test:map": "node tools/map-test.mjs",
+    "test:tuning": "node tools/tuning-test.mjs",
+    "test:responsive": "node tools/responsive-test.mjs",
+    "test:audio": "node tools/audio-stress.mjs",
+    "test:feel": "node tools/feel-baseline.mjs compare tools/feel-baseline.json",
+    "test:selftest": "node tools/selftest-red.mjs"
   },
   "keywords": [],
   "author": "",
