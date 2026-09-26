@@ -206,12 +206,14 @@ export class Game {
     this.focusMarker = null;
     this.boundPhase = 0;
     this.boundTimer = 0;
+    this.elementDone = [false, false];   // 交替掩护：两个小组是否已抵达航点
     this.weaponsFree = false;
     this.alarmRaised = false;
     this.alertPulse = 0;
     this.camShake = 0; this.camShakeY = 0; this.camShakeZ = 0;
     this.cursorMode = false;
     this.tacticalPause = false;
+    this._clearReported = false;
     this.missionTime = 0;
     this.clock = 23 * 3600 + 41 * 60;
     this.failed = false;
@@ -403,13 +405,36 @@ export class Game {
     });
   }
 
+  /**
+   * 队员抵达「移动清场」航点时的回调（由 SquadMember 调用）。
+   * 注意：这个方法曾经只被调用、却没有定义 —— 队员一到位就抛
+   * TypeError 并中断整个模拟循环。此方法必须始终存在。
+   */
+  onElementArrived(member) {
+    if (this.squadOrder !== 'clear' || !this.squadWaypoint) return;
+    const wp = this.squadWaypoint;
+    if (dist2D(member.pos.x, member.pos.z, wp.x, wp.z) >= 3.5) return;
+    this.elementDone[member.element] = true;      // 交替掩护：该组已到位
+    const alive = this.squad.filter((m) => m.alive);
+    const allOnPoint = alive.length > 0 &&
+      alive.every((m) => dist2D(m.pos.x, m.pos.z, wp.x, wp.z) < 3.5);
+    if (allOnPoint && !this._clearReported) {
+      this._clearReported = true;
+      this.log('区域已清空 — 小队抵达航点', 'good');
+      this.audio.radio('in');
+      this.ui.say('ARDEN：清空，区域安全。', null, 2.4);
+    }
+  }
+
   issueClearAt(x, z) {
     if (this.state !== 'play') return;
+    this._clearReported = false;
     this.squadWaypoint = { x, z };
     this.squadOrder = 'clear';
     this.stats.orders++;
     this.boundPhase = 0;
     this.boundTimer = 5.5;
+    this.elementDone = [false, false];
     for (const m of this.squad) { if (m.alive) { m.path = null; m.pathAge = 2; m.lastOrder = 'clear'; } }
     const d = Math.round(dist2D(this.player.pos.x, this.player.pos.z, x, z));
     this.log(`指令 · 移动清场 — 目标方位 ${d}m，交替掩护推进`, 'good');
