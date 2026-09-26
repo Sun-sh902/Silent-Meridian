@@ -2,40 +2,19 @@
    tools/tuning-test.mjs - 第 1 批验收：参数中枢 + 调参面板
    用法： node tools/tuning-test.mjs
    ============================================================ */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { Suite } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer(async (req, res) => {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (p === '/') p = '/index.html';
-  const f = join(root, normalize(p));
-  if (!existsSync(f)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(8212, '127.0.0.1', r));
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+const suite = new Suite('tuning-test');
+const server = await suite.serve({ port: 8212 });
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
   defaultViewport: { width: 1600, height: 900 },
 });
-const page = await browser.newPage();
-const errors = [];
-page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon/i.test(m.text())) errors.push(m.text()); });
+const page = await suite.newPage();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let failures = 0; const results = [];
-function check(name, ok, detail) {
-  if (!ok) failures++;
-  results.push({ name, ok, detail: detail === undefined ? '' : String(detail) });
-}
+const results = suite.results;
+const check = (name, ok, detail) => suite.check(name, ok, detail);
 
 await page.goto('http://127.0.0.1:8212/?deploy=1&test=1', { waitUntil: 'load' });
 await wait(2600);
@@ -53,7 +32,20 @@ const init = await page.evaluate(() => {
   };
 });
 check('面板已注入且默认隐藏', init.exists && init.hidden, JSON.stringify(init));
-check('滑块数量与参数表一致（>=60）', init.sliders >= 60, 'range=' + init.sliders + ' number=' + init.nums + ' checkbox=' + init.checks);
+/* 与 FEEL_SCHEMA 精确对账，而不是「>= 60」这种宽松断言 */
+const schemaCount = await page.evaluate(() => {
+  const items = window.__feelSchema.flatMap((g) => g.items);
+  return {
+    total: items.length,
+    numeric: items.filter((i) => (i[7] || 'num') !== 'bool').length,
+    bool: items.filter((i) => i[7] === 'bool').length,
+  };
+});
+check('滑块/开关数量与参数表逐项一致',
+  init.sliders === schemaCount.numeric && init.nums === schemaCount.numeric &&
+  init.checks === schemaCount.bool + 3,
+  `画面 range=${init.sliders} number=${init.nums} checkbox=${init.checks}` +
+  ` / 参数表 numeric=${schemaCount.numeric} bool=${schemaCount.bool}（checkbox 额外含工具栏 3 个开关）`);
 check('未接线参数有醒目标注', init.badges > 0, init.badges + ' 项标注「未接线」');
 
 /* 2. P 打开：释放指针、时间不降速 */
@@ -137,16 +129,44 @@ check('[ ] 调节当前选中项', ov2.val > ov.val, ov.val + ' -> ' + ov2.val);
 check(', . 切换选中参数', ov3 !== ov.sel, ov.sel + ' -> ' + ov3);
 
 /* 6. 导出 JSON 与复制 */
-const exp = await page.evaluate(() => {
+const exp = await page.evaluate(async () => {
   document.querySelector('[data-tp="export"]').click();
   const txt = document.getElementById('tp-text').value;
   let ok = false;
   try { const o = JSON.parse(txt); ok = !!o.move && !!o.weapon && !!o.spread; } catch (e) { ok = false; }
+  const open = document.getElementById('tp-text').classList.contains('open');
+
+  /* --- 成功路径：桩掉 clipboard.writeText --- */
+  let captured = null;
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: (t) => { captured = t; return Promise.resolve(); } },
+  });
   document.querySelector('[data-tp="copy"]').click();
-  return { len: txt.length, ok, open: document.getElementById('tp-text').classList.contains('open') };
+  await new Promise((r) => setTimeout(r, 60));
+  const okPath = captured === txt;
+
+  /* --- 失败路径：writeText 拒绝，必须回退到 execCommand --- */
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: () => Promise.reject(new Error('denied')) },
+  });
+  let fallbackUsed = false;
+  const origExec = document.execCommand;
+  document.execCommand = () => { fallbackUsed = true; return true; };
+  document.querySelector('[data-tp="copy"]').click();
+  await new Promise((r) => setTimeout(r, 120));
+  const textAfterFallback = document.getElementById('tp-text').value;
+  document.execCommand = origExec;
+
+  return { len: txt.length, ok, open, json: txt,
+    clip: { ok: okPath, text: captured || '', fallbackUsed, fallbackText: textAfterFallback } };
 });
 check('导出 JSON 可解析且含全部分组', exp.ok && exp.len > 500, 'JSON 长度 ' + exp.len);
-check('复制按钮可用（含回退路径）', exp.open, '文本框已展开');
+check('复制按钮：成功路径把 JSON 写入剪贴板', exp.clip.ok && exp.clip.text === exp.json,
+  'clipboard.writeText 收到 ' + exp.clip.text.length + ' 字符，与导出内容一致=' + (exp.clip.text === exp.json));
+check('复制按钮：剪贴板被拒时走降级路径', exp.clip.fallbackUsed,
+  'execCommand("copy") 被调用=' + exp.clip.fallbackUsed);
 
 /* 7. 冻结敌人 AI / 无敌 */
 await page.keyboard.press('KeyO');
@@ -176,11 +196,4 @@ check('冻结敌人 AI 生效（冻结后不再位移）', dbg.movedFrozen < 0.0
 check('无敌开关生效', dbg.hp1 === dbg.hp0, dbg.hp0 + ' -> ' + dbg.hp1);
 
 console.log('');
-console.log('===== 第 1 批验收：参数中枢 + 调参面板 =====');
-for (const r of results) console.log((r.ok ? '[PASS] ' : '[FAIL] ') + r.name + (r.detail ? '  —  ' + r.detail : ''));
-console.log('');
-console.log('控制台错误：', errors.length ? errors.slice(0, 4) : '（无）');
-console.log('合计 ' + (results.length - failures) + '/' + results.length + ' 通过');
-await browser.close();
-server.close();
-process.exit(failures ? 1 : 0);
+await suite.finish();

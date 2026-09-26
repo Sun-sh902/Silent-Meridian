@@ -10,43 +10,20 @@
      6) window.__mapDebug 可用，且与画面像素一致
    用法： node tools/map-test.mjs
    ============================================================ */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { Suite } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer(async (req, res) => {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (p === '/') p = '/index.html';
-  const f = join(root, normalize(p));
-  if (!existsSync(f)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(8207, '127.0.0.1', r));
-
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+const suite = new Suite('map-test');
+const server = await suite.serve({ port: 8207 });
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
   defaultViewport: { width: 1440, height: 900 },
 });
-const page = await browser.newPage();
-const errors = [];
-page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon/i.test(m.text())) errors.push(m.text()); });
+const page = await suite.newPage();
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let failures = 0;
-const results = [];
-function check(name, ok, detail) {
-  if (!ok) failures++;
-  results.push({ name, ok, detail: detail === undefined ? '' : String(detail) });
-}
+const results = suite.results;
+const check = (name, ok, detail) => suite.check(name, ok, detail);
 
 await page.goto('http://127.0.0.1:8207/?deploy=1&pos=0,0&yaw=0', { waitUntil: 'load' });
 await wait(2800);
@@ -280,10 +257,15 @@ const pixel = await page.evaluate(async () => {
       if (Math.abs(d3[i] - 78) < 45 && Math.abs(d3[i + 1] - 168) < 45 && Math.abs(d3[i + 2] - 255) < 45 && d3[i + 3] > 120) wrongHits++;
     }
   }
-  return { expect, hits, wrongHits };
+  const separated = Math.hypot(wrongX - px, wrongY - py);
+  return { expect, hits, wrongHits, separated: +separated.toFixed(1), px, py, wrongX, wrongY };
 });
 check('小地图渲染像素与 __mapDebug.worldToMap 一致', pixel.hits > 0,
   `期望像素处命中 ${pixel.hits} 个蓝色像素`);
+/* 反证：旧（旋转符号写反）的公式位置不应有队友标记，否则说明两式未分离或渲染另有来源 */
+check('旧（错误）公式位置无队友标记（反证旋转方向已修正）',
+  pixel.separated < 3 || pixel.wrongHits === 0,
+  `两式位置相距 ${pixel.separated}px，错误位置命中 ${pixel.wrongHits} 个蓝色像素`);
 
 /* ============ 每帧零分配（GC 抖动） ============ */
 const alloc = await page.evaluate(() => {
@@ -303,11 +285,4 @@ check('标签/坐标缓冲逐帧复用（无新增分配）',
   alloc.before === alloc.after && alloc.reused,
   `缓冲区 ${alloc.before} → ${alloc.after}，对象复用=${alloc.reused}`);
 
-console.log('\n===== 地图坐标变换验收 =====');
-for (const r of results) console.log(`${r.ok ? '✓ PASS' : '✗ FAIL'}  ${r.name}${r.detail ? '  —  ' + r.detail : ''}`);
-console.log('\n控制台错误：', errors.length ? errors.slice(0, 5) : '（无）');
-console.log(`\n合计 ${results.length - failures}/${results.length} 通过`);
-
-await browser.close();
-server.close();
-process.exit(failures ? 1 : 0);
+await suite.finish();

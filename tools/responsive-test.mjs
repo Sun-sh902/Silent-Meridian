@@ -12,37 +12,17 @@
      · canvas backing store = CSS 尺寸 × DPR（清晰不变形）
    用法： node tools/responsive-test.mjs
    ============================================================ */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { Suite } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer(async (req, res) => {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (p === '/') p = '/index.html';
-  const f = join(root, normalize(p));
-  if (!existsSync(f)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(8202, '127.0.0.1', r));
-
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+const suite = new Suite('responsive-test');
+const server = await suite.serve({ port: 8202 });
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
 });
-const page = await browser.newPage();
-const errors = [];
-page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon/i.test(m.text())) errors.push(m.text()); });
+const page = await suite.newPage();
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let failures = 0;
 const failuresList = [];
 
 /* ---------------- 页面内检查脚本 ---------------- */
@@ -145,14 +125,12 @@ async function audit(label, viewport) {
   for (const k of ['hScroll', 'overlaps', 'textOverflow', 'smallFont', 'canvases', 'offscreen']) {
     for (const msg of r[k]) problems.push(k + ': ' + msg);
   }
-  if (problems.length) {
-    failures++;
+  const ok = problems.length === 0;
+  suite.check(label, ok, ok ? '' : problems.slice(0, 3).join(' | '));
+  if (!ok) {
     failuresList.push({ label, problems });
-    console.log(`✗ ${label}`);
     problems.slice(0, 6).forEach((p) => console.log('    ' + p));
     if (problems.length > 6) console.log(`    … 另有 ${problems.length - 6} 项`);
-  } else {
-    console.log(`✓ ${label}`);
   }
   return problems.length;
 }
@@ -207,10 +185,4 @@ for (const w of [1920, 1440, 1024, 768, 480]) {
   await audit(`战果面板 ${w}px`, { width: w, height: Math.max(600, Math.round(w * 0.62)), deviceScaleFactor: 1 });
 }
 
-console.log(`\n===== 结果：${failures === 0 ? '全部通过' : failures + ' 项未通过'} =====`);
-if (errors.length) console.log('控制台错误：', errors.slice(0, 5));
-console.log('控制台错误数：', errors.length);
-
-await browser.close();
-server.close();
-process.exit(failures ? 1 : 0);
+await suite.finish();

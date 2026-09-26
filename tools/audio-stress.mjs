@@ -8,48 +8,27 @@
      · 是否出现未捕获异常
    用法： node tools/audio-stress.mjs
    ============================================================ */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { extname, join, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
+import { Suite } from './harness.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer(async (req, res) => {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (p === '/') p = '/index.html';
-  const f = join(root, normalize(p));
-  if (!existsSync(f)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(8201, '127.0.0.1', r));
+const suite = new Suite('audio-stress');
+const server = await suite.serve({ port: 8201 });
 
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+const browser = await suite.launch({
   headless: 'shell',
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox',
     '--js-flags=--expose-gc'],
   defaultViewport: { width: 1280, height: 720 },
 });
-const page = await browser.newPage();
-const errors = [];
-page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+const page = await suite.newPage();
+/* 本套件额外把「单帧逻辑耗时异常」这类 warning 也算作失败 */
 page.on('console', (m) => {
   const t = m.text();
-  if (m.type() === 'error' && !/favicon/i.test(t)) errors.push('console.error: ' + t);
-  if (m.type() === 'warning' && /SILENT MERIDIAN/.test(t)) errors.push('warn: ' + t);
+  if (m.type() === 'warning' && /SILENT MERIDIAN/.test(t)) suite.pageErrors.push('warn: ' + t);
 });
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let failures = 0;
-const results = [];
-function check(name, ok, detail) {
-  if (!ok) failures++;
-  results.push({ name, ok, detail: detail || '' });
-}
+const results = suite.results;
+const check = (name, ok, detail) => suite.check(name, ok, detail);
 
 await page.goto('http://127.0.0.1:8201/?deploy=1&pos=0,-30&yaw=0', { waitUntil: 'load' });
 await wait(2500);
@@ -124,7 +103,7 @@ check('AudioContext 仍为 1 个', after.audio.ctxCount === 1, 'ctxCount=' + aft
 check('音频节点已回收（不超过 40）', after.audio.liveNodes <= 40, 'liveNodes=' + after.audio.liveNodes);
 check('DOM 日志未堆积', after.logItems <= 7, 'log-item=' + after.logItems);
 check('白屏叠加层已淡出', parseFloat(after.whiteout) === 0, 'opacity=' + after.whiteout);
-check('无未捕获异常', errors.length === 0, errors.slice(0, 3).join(' / '));
+/* 页面异常不再是普通断言，而是由 Suite 统一计入失败（更强约束） */
 if (base.heap && after.heap) {
   const growMB = (after.heap - base.heap) / 1048576;
   check('JS 堆增长 < 25MB（仅供参考）', growMB < 25, growMB.toFixed(1) + ' MB');
@@ -143,8 +122,4 @@ console.log('  被抑制的重复音效    :', after.audio.gated, '次');
 console.log('  在用音频节点        :', base.audio.liveNodes, '→', after.audio.liveNodes);
 console.log('  DOM 节点            :', base.domNodes, '→', after.domNodes);
 if (base.heap && after.heap) console.log('  JS 堆               :', (base.heap / 1048576).toFixed(1), '→', (after.heap / 1048576).toFixed(1), 'MB');
-console.log(`\n合计 ${results.length - failures}/${results.length} 通过`);
-
-await browser.close();
-server.close();
-process.exit(failures ? 1 : 0);
+await suite.finish();
