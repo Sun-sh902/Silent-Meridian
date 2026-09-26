@@ -549,7 +549,12 @@
   document.addEventListener('keydown', function (e) {
     if (e.repeat) return;
     var locked = !!document.pointerLockElement;
-    var byD = e.code === 'KeyD' && !locked && !e.ctrlKey && !e.metaKey;
+    /* D 键归属规则：
+       - 行动中（含 Alt 光标模式、调参面板打开时）D 属于游戏，必须能右平移；
+       - 只有不在行动中（主菜单/简报/配装/战果）才用 D 开关本调试面板。
+       使用 ~（Backquote）则任何状态都能开关面板。 */
+    var playing = !!(window.__game && window.__game.state === 'play');
+    var byD = e.code === 'KeyD' && !locked && !playing && !e.ctrlKey && !e.metaKey;
     var byTilde = e.code === 'Backquote';
     if (!byD && !byTilde) return;
     e.preventDefault();
