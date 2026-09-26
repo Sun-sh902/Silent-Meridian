@@ -218,6 +218,9 @@ export class Game {
     this.camShake = 0; this.camShakeY = 0; this.camShakeZ = 0;
     this.cursorMode = false;
     this.tacticalPause = false;
+    /* 必须重置：暂停菜单 →「中止并返回主菜单」/「重新开始」都会走到 deploy()，
+       若沿用上一局的 paused=true，主循环里 ts 恒为 0，新一局完全冻结。 */
+    this.paused = false;
     this._clearReported = false;
     this.missionTime = 0;
     this.clock = 23 * 3600 + 41 * 60;

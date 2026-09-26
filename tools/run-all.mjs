@@ -27,6 +27,7 @@ if (!existsSync(join(ROOT, 'dist', 'silent-meridian.html'))) {
 const SUITES = [
   ['click-test',        ['tools/click-test.mjs']],
   ['fixes-test',        ['tools/fixes-test.mjs']],
+  ['p0-test',           ['tools/p0-test.mjs']],
   ['map-test',          ['tools/map-test.mjs']],
   ['tuning-test',       ['tools/tuning-test.mjs']],
   ['responsive-test',   ['tools/responsive-test.mjs']],

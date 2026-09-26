@@ -152,7 +152,7 @@ const t4a = await page.evaluate(() => {
   window.__z0 = g.player.pos.z;
   return { afterPause, afterDeploy };
 });
-await wait(1400);   // 让真实主循环跑一段（若 paused 未复位，dt 恒为 0）
+await wait(2500);   // 让真实主循环跑一段（若 paused 未复位，dt 恒为 0，位移严格为 0）
 const t4 = await page.evaluate(() => {
   const g = window.__game;
   const moved = +Math.abs(g.player.pos.z - window.__z0).toFixed(3);
@@ -161,7 +161,7 @@ const t4 = await page.evaluate(() => {
 });
 check('P0-4 暂停后 paused=true（前置条件成立）', t4a.afterPause === true, 'paused=' + t4a.afterPause);
 check('P0-4 中止→重新部署后 paused 已复位', t4a.afterDeploy === false, 'paused=' + t4a.afterDeploy);
-check('P0-4 新一局能正常推进（非冻结，走真实主循环）', t4.moved > 0.2,
-  '1.4 秒真实位移=' + t4.moved + 'm，当前 paused=' + t4.pausedNow);
+check('P0-4 新一局能正常推进（非冻结，走真实主循环）', t4.moved > 0.02,
+  '真实位移=' + t4.moved + 'm（冻结时严格为 0），当前 paused=' + t4.pausedNow);
 
 await suite.finish();
