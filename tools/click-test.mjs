@@ -294,7 +294,16 @@ const indexPath = join(root, 'index.html');
     // 先回到菜单，指针未锁定时按 D
     await p3.evaluate(() => { if (document.exitPointerLock) document.exitPointerLock(); });
     await wait(300);
-    await p3.keyboard.press('KeyD');
+    /* P0-3 的回归守卫：行动中 D 属于游戏（右平移），不得开关面板 */
+  await p3.keyboard.press('KeyD');
+  await wait(250);
+  const dOpened = await p3.evaluate(() => {
+    const p = document.querySelector('#debug-panel');
+    return p ? !p.classList.contains('hidden') : false;
+  });
+  assert(!dOpened, '行动中按 D 不应弹出调试面板（P0-3 回归）');
+  /* 行动中请用 ~ 唤出面板 */
+  await p3.keyboard.press('Backquote');
     await wait(300);
     const d = await p3.evaluate(() => {
       const p = document.querySelector('#debug-panel');

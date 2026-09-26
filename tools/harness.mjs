@@ -61,7 +61,20 @@ export async function startStaticServer({ port, root = ROOT }) {
       res.end(await readFile(f));
     } catch (err) { res.writeHead(500); res.end(String(err)); }
   });
-  await new Promise((r) => server.listen(port, '127.0.0.1', r));
+  await new Promise((resolve, reject) => {
+    server.once('error', (err) => {
+      if (err && err.code === 'EADDRINUSE') {
+        console.error('');
+        console.error('[harness] 端口 ' + port + ' 已被占用 —— 通常是上一次测试异常退出后残留的服务进程。');
+        console.error('  清理： lsof -ti:' + port + ' | xargs kill');
+        console.error('');
+        process.exit(2);
+      }
+      reject(err);
+    });
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  process.on('exit', () => { try { server.close(); } catch (e) { /* 已关闭 */ } });
   return {
     server,
     url: 'http://127.0.0.1:' + port + '/',
