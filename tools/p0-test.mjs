@@ -124,7 +124,7 @@ const t3 = await page.evaluate(() => {
   const res = {
     movedX: +(g.player.pos.x - x0).toFixed(3),
     keySeen: g.input.keys.has('KeyD'),
-    panelOpen: dbg ? !dbg.classList.contains('hidden') : null,
+    panelOpen: dbg ? !dbg.classList.contains('hidden') : false,   // 元素不存在 = 未弹出
   };
   g.input.keys.clear();
   g.setCursorMode(false);
