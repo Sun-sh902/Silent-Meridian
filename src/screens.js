@@ -181,6 +181,13 @@ export class Screens {
     this.current = name;
     if (name === 'loadout') this.refreshStats();
     document.body.style.cursor = name === 'game' ? 'none' : 'default';
+    /* 键盘可达性：界面切换后把焦点移入新界面。
+       此前 .hidden{display:none} 会把持有焦点的元素整个移出渲染树，
+       焦点静默掉回 <body>，Tab 顺序从文档开头重来，键盘用户会失去位置感。 */
+    if (el && name !== 'game') {
+      const first = el.querySelector('button:not([disabled]), [href], input, select, textarea');
+      if (first) first.focus({ preventScroll: true });
+    }
   }
 
   showGame() {

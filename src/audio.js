@@ -38,8 +38,6 @@ export class Audio {
     this._gatedCount = 0;
     this._droppedCount = 0;
     this.live = new Set();       // 正在发声的节点（诊断用）
-    this.rainNodes = null;
-    this._ambience = false;      // 环境声是否应当开启（仅行动中为 true）
   }
 
   /* ============================================================
@@ -71,8 +69,7 @@ export class Audio {
 
     this.ready = true;
     this._buildNoiseBuffer();             // 3. 分块生成，不阻塞
-    // 注意：这里不再启动环境声。init() 只负责建图（菜单里点按钮也需要音效），
-    // 雨声必须由 startAmbience() 显式开启，否则备战界面就会听到港区环境音。
+    // init() 只负责建图：菜单里点按钮也需要音效，但不开启任何持续环境声。
 
     // 1. 首次用户手势里 resume（浏览器自动播放策略）
     const gesture = () => this.resume();
@@ -171,65 +168,6 @@ export class Audio {
     param.setValueAtTime(0.0001, t);
     param.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + atk);
     param.exponentialRampToValueAtTime(0.0001, t + atk + rel);
-  }
-
-  /* ============================================================
-     持续音：雨
-     ============================================================ */
-  /** 进入行动时才开启环境声 */
-  startAmbience() {
-    if (!this.ready) this.init();
-    this._ambience = true;
-    this.startRain();
-  }
-
-  /** 离开行动时淡出并彻底断开环境声节点 */
-  stopAmbience() {
-    this._ambience = false;
-    if (!this.rainNodes || !this.ctx) return;
-    const { src, g, hp, lp, lfo, lfoG } = this.rainNodes;
-    const t = this.ctx.currentTime;
-    g.gain.cancelScheduledValues(t);
-    g.gain.setValueAtTime(Math.max(g.gain.value, 0.0001), t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);   // 淡出，避免爆音
-    [src, lfo].forEach((n) => { try { n.stop(t + 0.4); } catch (e) { /* 已停止 */ } });
-    this.rainNodes = null;
-    setTimeout(() => {
-      [src, g, hp, lp, lfo, lfoG].forEach((n) => {
-        try { n.disconnect(); } catch (e) { /* 已断开 */ }
-        this.live.delete(n);
-      });
-    }, 500);
-  }
-
-  startRain() {
-    if (!this.ready || this.rainNodes || !this._ambience) return;
-    const src = this._noiseSource(0.85, true);
-    if (!src) { setTimeout(() => { if (this._ambience) this.startRain(); }, 200); return; }
-    const hp = this.ctx.createBiquadFilter();
-    hp.type = 'highpass'; hp.frequency.value = 900;
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 5200;
-    const g = this.ctx.createGain();
-
-    src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(this.master);
-    const t = this.ctx.currentTime;
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.05, t + 0.8);   // 淡入，无爆音
-
-    // 缓慢起伏（LFO 也做 ramp 起步）
-    const lfo = this.ctx.createOscillator();
-    lfo.frequency.value = 0.06;
-    const lfoG = this.ctx.createGain();
-    lfoG.gain.setValueAtTime(0.0001, t);
-    lfoG.gain.exponentialRampToValueAtTime(0.018, t + 1.2);
-    lfo.connect(lfoG); lfoG.connect(g.gain);
-    lfo.start(t);
-
-    this.live.add(src); this.live.add(hp); this.live.add(lp); this.live.add(g);
-    this.live.add(lfo); this.live.add(lfoG);
-    src.start(t);   // 循环音源，不 stop
-    this.rainNodes = { src, g, hp, lp, lfo, lfoG };
   }
 
   /* ============================================================
@@ -416,21 +354,6 @@ export class Audio {
     src.connect(lp); lp.connect(g); g.connect(this.master);
     this._v(src, [lp, g]);
     src.start(t); src.stop(t + 1.4);
-  }
-
-  thunder() {
-    if (!this.ready || this.muted || !this.noiseReady) return;
-    if (!this._budget()) return;
-    if (!this._gate('thunder', 800)) return;
-    const t = this.ctx.currentTime;
-    const src = this._noiseSource(0.25);
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 260;
-    const g = this.ctx.createGain();
-    this._env(g.gain, t, 0.22, 60, 2400);
-    src.connect(lp); lp.connect(g); g.connect(this.master);
-    this._v(src, [lp, g]);
-    src.start(t); src.stop(t + 3.2);
   }
 
   hurt() {

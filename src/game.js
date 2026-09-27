@@ -30,12 +30,23 @@ export class Game {
     this.renderer.toneMappingExposure = 1.28;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    /* 注：曾尝试把阴影贴图改成「按需重算」（autoUpdate=false + 脏标记），
+       实测跳过率为 0% —— 队形内的队友每帧都会有微小位移（yaw 阻尼逼近、
+       分离推挤、瞄准跟随），几乎没有「所有投影体都完全静止」的帧。
+       收益为零却要求所有未来的投影体都记得打标记，故不采用；
+       只保留下面 world.update 里的纹素对齐（那是真正的画质修复）。 */
     this.camera = new THREE.PerspectiveCamera(72, 1, 0.05, 420);
     this.audio = new Audio();
     this.state = 'menu';
     this.timeScale = 1;
     this.paused = false;
     this.tacticalPause = false;
+    /* 任务生命周期：missionEpoch 每次 deploy() 自增，later() 调度的回调
+       若发现 epoch 已变（或已不在行动中）就直接放弃执行。
+       _timers 收集所有受任务约束的定时器，disposeMission() 会全部取消。 */
+    this.missionEpoch = 0;
+    this._timers = new Set();
+    this._coverScratch = [];      // findCoverFor 的复用查询缓冲
     this.rng = makeRng(991);
     this.resizeCount = 0;
     this.resize();
@@ -191,9 +202,11 @@ export class Game {
      ============================================================ */
   deploy(loadout) {
     this.disposeMission();
+    /* 自增 epoch：即便有回调在 clearTimers() 之前就已进入事件队列，
+       也会因为 epoch 不匹配而放弃执行（见 later()）。 */
+    this.missionEpoch++;
     this.audio.init();
     this.audio.resume();
-    this.audio.startAmbience();          // 环境声只在进入行动后开启
     this.loadout = loadout || this.loadout;
 
     this.scene = new THREE.Scene();
@@ -316,7 +329,6 @@ export class Game {
     this.tacmap = new TacMap(this);
     this.viewmodel = new ViewModel(this, this.camera);
     this.viewmodel.resize(window.innerWidth, window.innerHeight);
-    this.world.onThunder(() => this.audio.thunder());
     this.installMapDebug();
     this.state = 'play';
     this.screens.showGame();
@@ -334,6 +346,34 @@ export class Game {
   }
 
   disposeMission() {
+    /* 先取消上一局遗留的定时器：否则「中止 → 立即重新部署」时，
+       旧回调仍会执行，去改已经废弃的演员对象，甚至把新一局直接判负。 */
+    this.clearTimers();
+    /* ---- 释放「不在场景图里」的 GPU 资源 ----
+       scene.traverse 只能扫到挂进场景图的对象；下面这些逃逸在外，
+       实测每次重新部署会净增约 8 张纹理、25 个 geometry 与若干 framebuffer。 */
+    if (this.scene) {
+      if (this.scene.background && this.scene.background.dispose) this.scene.background.dispose();
+      this.scene.background = null;
+      this.scene.environment = null;
+    }
+    if (this.world) {
+      if (this.world.envRT && this.world.envRT.dispose) this.world.envRT.dispose();
+      if (this.world.skyTex && this.world.skyTex.dispose) this.world.skyTex.dispose();
+      const L = this.world.lights;
+      if (L) {
+        /* 月光的 2048² 阴影贴图是一张 render target，必须显式释放 */
+        for (const key of ['moon', 'hemi']) {
+          const li = L[key];
+          if (li && li.shadow && li.shadow.map) { li.shadow.map.dispose(); li.shadow.map = null; }
+        }
+      }
+      this.world = null;
+    }
+    if (this.viewmodel && this.viewmodel.dispose) this.viewmodel.dispose();
+    this.viewmodel = null;
+    this.effects = null;
+    this.projectiles = [];
     if (this.scene) {
       this.scene.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
@@ -350,21 +390,55 @@ export class Game {
       this.scene.clear();
       this.scene = null;
     }
-    if (this.ui) { this.ui.el.log.innerHTML = ''; this.ui.el.radio.innerHTML = ''; }
-    if (this.tacmap) { this.tacmap.hide(); this.tacmap.static = null; }
+    if (this.ui) {
+      this.ui.el.log.innerHTML = '';
+      this.ui.el.radio.innerHTML = '';
+      /* ResizeObserver 必须断开：否则旧 HUD（含离屏小地图画布）会被闭包永久持有 */
+      if (this.ui.sizeWatch && this.ui.sizeWatch.disconnect) this.ui.sizeWatch.disconnect();
+      this.ui = null;
+    }
+    if (this.tacmap) {
+      this.tacmap.hide();
+      this.tacmap.static = null;
+      if (this.tacmap.sizeWatch && this.tacmap.sizeWatch.disconnect) this.tacmap.sizeWatch.disconnect();
+      if (this.tacmap.dispose) this.tacmap.dispose();
+      this.tacmap = null;
+    }
   }
 
   abort() {
-    this.audio.stopAmbience();
     this.disposeMission();
     this.state = 'menu';
     if (document.exitPointerLock) document.exitPointerLock();
     this.screens.hideGame();
   }
 
+  /* ============================================================
+     受任务生命周期约束的定时器
+     ------------------------------------------------------------
+     所有会改动任务状态（演员、目标、结算）的延时回调都必须走这里，
+     不要直接用 setTimeout —— 它不会随 abort()/重新部署而取消。
+     ============================================================ */
+  later(ms, fn) {
+    const epoch = this.missionEpoch;
+    const id = setTimeout(() => {
+      this._timers.delete(id);
+      if (epoch !== this.missionEpoch || this.state !== 'play') return;
+      fn();
+    }, ms);
+    this._timers.add(id);
+    return id;
+  }
+
+  clearTimers() {
+    if (!this._timers) return;
+    for (const id of this._timers) clearTimeout(id);
+    this._timers.clear();
+  }
+
   setBeats() {
     this.beats = [
-      { t: 4, done: false, fn: () => this.ui.radio('ARDEN-2 · K.阿登', '队长，雨太大，光点看不远。我先看，你下令。') },
+      { t: 4, done: false, fn: () => this.ui.radio('ARDEN-2 · K.阿登', '队长，雾太重，光点看不远。我先看，你下令。') },
       { t: 11, done: false, fn: () => this.ui.say('按住 空格 进入战术暂停，时间会减慢。用准星压住目标直到识别完成 —— 再下令。', null, 8) },
       { t: 26, done: false, fn: () => this.ui.radio('调度 · MERIDIAN', '注意，港区内仍有夜班工人在岗。识别完成前不要开火。') },
     ];
@@ -523,8 +597,17 @@ export class Game {
 
   /* ============================================================
      识别机制
+     ------------------------------------------------------------
+     时间基准说明（有意为之，勿随意改成 dt）：
+       · 识别按 rawDt（真实时间）推进，因此「战术暂停」（时间 10%）下
+         依然能全速完成识别 —— 这正是 README 承诺的
+         「按住空格进入战术暂停，可以在不冒风险的情况下完成识别并下达指令」。
+       · 但暂停菜单（ts = 0）必须真正冻结，否则你在菜单里挂着，
+         战场上的识别进度自己涨满了。
+       · 战术地图打开时同理：人在地图上，不该继续积累识别。
      ============================================================ */
   updateObservation(rawDt) {
+    if (this.paused || (this.tacmap && this.tacmap.open)) return;
     const p = this.player;
     const f = p.forward, eye = p.eye;
     let best = null, bestD = Infinity;
@@ -649,12 +732,12 @@ export class Game {
       const d = dist2D(s.pos.x, s.pos.z, origin.x, origin.z);
       if (d < 80 && !s.alerted) {
         s.awareness = Math.max(s.awareness, 0.6);
-        setTimeout(() => {
-          if (!s.alive || s.surrendered || this.state !== 'play') return;
+        this.later(1200 + Math.random() * 2600, () => {
+          if (!s.alive || s.surrendered) return;
           s.alerted = true;
           s.state = 'engage';
           s.target = this.player;
-        }, 1200 + Math.random() * 2600);
+        });
       }
     }
     this.ui.say('警讯已扩散 — 嫌疑人正在收拢。保持火力纪律，别打到平民。', null, 4.5);
@@ -702,9 +785,7 @@ export class Game {
       this.ui.say('你失去了行动能力。小队将自行脱离 —— 行动中止。', null, 4);
       this.audio.hurt();
       if (this.alarmRaised === false) this.raiseAlarm('队长伤亡');
-      setTimeout(() => {
-        if (this.state === 'play') this.finishMission(false);
-      }, 3200);
+      this.later(3200, () => this.finishMission(false));
       return;
     }
     this.log(`${m.callsign} 失去行动能力！`, 'bad');
@@ -821,7 +902,6 @@ export class Game {
   finishMission(success) {
     if (this.state !== 'play') return;
     this.state = 'debrief';
-    this.audio.stopAmbience();
     if (document.exitPointerLock) document.exitPointerLock();
     const res = this.buildResult(success);
     this.screens.showDebrief(res);
@@ -859,7 +939,7 @@ export class Game {
     } else if (!success) {
       comment = '行动未能达成主要目标。若时间允许，先用战术暂停理清现场再推进；港区里有太多角落可以藏人。';
     } else if (this.stats.blindShots > 8) {
-      comment = '射击次数不少，但多数开火发生在识别完成之前。雨幕里的轮廓会骗人 —— 用战术暂停换时间。';
+      comment = '射击次数不少，但多数开火发生在识别完成之前。雾里的轮廓会骗人 —— 用战术暂停换时间。';
     } else if (this.counters.detained >= 3) {
       comment = '优秀的武力使用控制。多数嫌疑人被活着拘押，这将直接影响后续的取证与审讯。';
     } else if (this.counters.squadDown > 0) {
@@ -893,7 +973,7 @@ export class Game {
   }
 
   findCoverFor(actor, threat, dist) {
-    const list = this.world.coverIdx.queryCircle(actor.pos.x, actor.pos.z, 18, []);
+    const list = this.world.coverIdx.queryCircle(actor.pos.x, actor.pos.z, 18, this._coverScratch);
     let best = null, bestScore = -Infinity;
     for (const b of list) {
       const c = b.ref;
@@ -1083,7 +1163,7 @@ export class Game {
     this.refreshObjectives();
 
     this.updateShake(rawDt);
-    this.player.applyCamera(this.camera);
+    this.player.applyCamera(this.camera, dt);
     this.viewmodel.update(dt, this.player, this.input);
     this.updateWeaponLight();
 
@@ -1168,6 +1248,10 @@ export class Game {
 
   updateBound(dt) {
     if (this.squadOrder !== 'clear' || !this.squadWaypoint) return;
+    /* 两个小组都已推进到位 ⇒ 交替掩护完成。
+       此前 elementDone 只写不读，这里会每 5.5s 无限翻转阶段，
+       并把已经站好位的队员的路径反复清空。 */
+    if (this.elementDone[0] && this.elementDone[1]) return;
     this.boundTimer -= dt;
     const wp = this.squadWaypoint;
     const moving = this.squad.filter((m) => m.alive && m.element === this.boundPhase);
@@ -1208,9 +1292,12 @@ export class Game {
     }
   }
 
-  updateShake(dt) {
+  /* 屏幕震动按真实时间（rawDt）衰减，与 timeScale 无关 —— 这是有意的：
+     震动是纯视觉反馈，暂停时若冻结在半途，画面会在暂停菜单里持续抖动。
+     形参名与调用点统一为 rawDt，避免被误读成「已经过 timeScale 的 dt」。 */
+  updateShake(rawDt) {
     if (this.camShake > 0.001) {
-      this.camShake *= Math.exp(-dt * feel.feedback.shakeDecay);
+      this.camShake *= Math.exp(-rawDt * feel.feedback.shakeDecay);
       this.camShakeY = (Math.random() - 0.5) * this.camShake * feel.feedback.shakeYaw;
       this.camShakeZ = (Math.random() - 0.5) * this.camShake * feel.feedback.shakeRoll;
     } else { this.camShake = 0; this.camShakeY = 0; this.camShakeZ = 0; }

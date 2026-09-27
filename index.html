@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>寂静子午线 · THE SILENT MERIDIAN — 行动 01「雨幕」</title>
+<title>寂静子午线 · THE SILENT MERIDIAN — 行动 01「静默泊位」</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23070d13'/%3E%3Cpath d='M16 5l9 11-9 11-9-11z' fill='%2354d6c6'/%3E%3C/svg%3E" />
 <!-- 版本号 v=1.0.1：每次改动需递增，并与下方 bootstrap 里的 V 常量保持一致（build.mjs 会校验） -->
 <link rel="stylesheet" href="./styles/ui.css?v=1.1.0" />
@@ -24,7 +24,6 @@
   <div id="whiteout"></div>
   <div id="vignette"></div>
   <div id="damage-flash"></div>
-  <div id="rain-glass"></div>
 
   <!-- ===================== HUD ===================== -->
   <div id="hud" class="hidden">
@@ -33,13 +32,13 @@
       <div id="objective-panel" class="panel">
         <div class="panel-title">
           <span class="tag">OPERATION 01</span>
-          <span class="codename">雨幕 / RAIN VEIL</span>
+          <span class="codename">静默泊位 / SILENT BERTH</span>
         </div>
-        <ul id="objective-list"></ul>
+        <ul id="objective-list" aria-live="polite" aria-label="任务目标"></ul>
       </div>
 
       <div id="compass-wrap">
-        <canvas id="compass" width="720" height="58" aria-label="罗盘"></canvas>
+        <canvas id="compass" width="720" height="58" role="img" aria-label="罗盘：指示当前朝向"></canvas>
         <div id="compass-readout">
           <span id="bearing-text">N</span>
           <span id="bearing-deg">000</span>
@@ -49,21 +48,21 @@
       <div id="hud-right">
         <div id="status-panel" class="panel">
           <div class="stat-row"><span class="k">时钟 / CLOCK</span><span class="v" id="clock">23:41</span></div>
-          <div class="stat-row"><span class="k">交战状态</span><span class="v" id="alert-state">安静</span></div>
-          <div class="stat-row"><span class="k">已识别</span><span class="v" id="id-count">0 / 0</span></div>
-          <div class="stat-row"><span class="k">平民</span><span class="v" id="civ-count">0 / 0</span></div>
+          <div class="stat-row"><span class="k">交战状态</span><span class="v" id="alert-state" role="status" aria-live="polite">安静</span></div>
+          <div class="stat-row"><span class="k">已识别</span><span class="v" id="id-count" role="status" aria-live="polite">0 / 0</span></div>
+          <div class="stat-row"><span class="k">平民</span><span class="v" id="civ-count" role="status" aria-live="polite">0 / 0</span></div>
         </div>
-        <div id="mini-map"><canvas id="minimap" width="220" height="220" aria-label="小地图"></canvas></div>
+        <div id="mini-map"><canvas id="minimap" width="220" height="220" role="img" aria-label="小地图：以玩家朝向为上"></canvas></div>
       </div>
     </div>
 
     <div id="hud-mid">
-      <div id="radio-feed"></div>
+      <div id="radio-feed" role="log" aria-live="polite" aria-label="电台通话"></div>
       <div id="observe-banner" class="hidden">
         <div class="ob-label">战术暂停 / TACTICAL PAUSE</div>
         <div class="ob-sub">时间已减慢 — 观察、指挥、再动手</div>
       </div>
-      <div id="log"></div>
+      <div id="log" role="log" aria-live="polite" aria-label="事件日志"></div>
     </div>
 
     <div id="hud-bottom">
@@ -74,16 +73,16 @@
         </div>
         <div id="squad-list"></div>
         <div id="command-bar">
-          <div class="cmd" data-action="order" data-order="follow"><b>1</b><span>跟随</span><i>FOLLOW</i></div>
-          <div class="cmd" data-action="order" data-order="hold"><b>2</b><span>待命</span><i>HOLD</i></div>
-          <div class="cmd" data-action="order" data-order="clear"><b>3</b><span>移动清场</span><i>CLEAR</i></div>
-          <div class="cmd wide" data-action="order" data-order="regroup"><b>4</b><span>归队</span><i>REGROUP</i></div>
+          <button type="button" class="cmd" data-action="order" data-order="follow" aria-label="跟随（快捷键 1）"><b>1</b><span>跟随</span><i>FOLLOW</i></button>
+          <button type="button" class="cmd" data-action="order" data-order="hold" aria-label="待命（快捷键 2）"><b>2</b><span>待命</span><i>HOLD</i></button>
+          <button type="button" class="cmd" data-action="order" data-order="clear" aria-label="移动清场（快捷键 3）"><b>3</b><span>移动清场</span><i>CLEAR</i></button>
+          <button type="button" class="cmd wide" data-action="order" data-order="regroup" aria-label="归队（快捷键 4）"><b>4</b><span>归队</span><i>REGROUP</i></button>
         </div>
         <div id="cursor-hint">按 <b>Alt</b> 释放鼠标，即可点击上面的指令按钮</div>
       </div>
 
       <div id="hud-bottom-center">
-        <div id="subtitle"></div>
+        <div id="subtitle" role="status" aria-live="polite"></div>
         <div id="hint-bar">WASD 移动 · 鼠标观察 · <b>右键</b> 瞄准 · <b>空格</b> 战术暂停 · <b>1/2/3</b> 指令 · <b>E</b> 互动 · <b>R</b> 换弹 · <b>G</b> 投掷 · <b>F</b> 战术灯 · <b>Tab</b> 战术地图 · <b>Alt</b> 释放鼠标</div>
       </div>
 
@@ -144,7 +143,7 @@
           <span><i class="sw unknown"></i>未识别（灰 ?）</span>
         </div>
       </div>
-      <canvas id="tacmap-canvas" width="1280" height="860"></canvas>
+      <canvas id="tacmap-canvas" width="1280" height="860" role="img" aria-label="战术地图：北朝上，显示小队、已识别目标、任务点与目击事件"></canvas>
       <div class="tm-foot">
         <span>左键：放置小队航点（移动清场）</span>
         <span>右键：放置队长航点</span>
@@ -166,10 +165,10 @@
         <span class="zh">寂静子午线</span>
         <span class="en">THE SILENT MERIDIAN</span>
       </h1>
-      <div class="subtitle">战术警备模拟 · 行动 01「雨幕」</div>
+      <div class="subtitle">战术警备模拟 · 行动 01「静默泊位」</div>
       <div class="title-divider"></div>
       <p class="blurb">
-        23:41。暴雨封锁了子午线港三号泊位。调度室失去联络，一份货单在混乱中失踪，
+        23:41。海雾封锁了子午线港三号泊位。调度室失去联络，一份货单在混乱中失踪，
         持械人员在仓区游荡。你是这支四人警备小组的队长——
         在这条子午线上，先看清，再下令。
       </p>
@@ -190,7 +189,7 @@
       <div class="doc-head">
         <div>
           <div class="doc-kicker">机密 · MERIDIAN PORT AUTHORITY 战术警备处</div>
-          <h2>行动简报：雨幕</h2>
+          <h2>行动简报：静默泊位</h2>
         </div>
         <div class="doc-stamp">OPERATION<br><b>01</b></div>
       </div>
@@ -198,7 +197,7 @@
         <section>
           <h3>态势 <em>SITUATION</em></h3>
           <p>
-            23:41，子午线港三号泊位。暴雨导致港区照明与通讯降级，调度室在 22:58 之后失联。
+            23:41，子午线港三号泊位。海雾导致港区照明与通讯降级，调度室在 22:58 之后失联。
             自动门禁记录显示，三辆无标识货柜车在 23:12 未经登记进入仓区。
             码头值守报告听到争执与一声疑似枪响后通讯中断。
           </p>
@@ -222,7 +221,7 @@
           <div class="roe">
             <div class="roe-item">
               <b>先观察，再下令</b>
-              <p>雨幕中无法从轮廓分辨平民与持械者。按住 <kbd>空格</kbd> 进入战术暂停，
+              <p>海雾中无法从轮廓分辨平民与持械者。按住 <kbd>空格</kbd> 进入战术暂停，
               用准星持续压住目标完成识别（目标卡进度条满格）。识别前开火将计入「盲射」并扣分。</p>
             </div>
             <div class="roe-item">
@@ -245,7 +244,7 @@
         <section>
           <h3>环境 <em>ENVIRONMENT</em></h3>
           <ul class="kv">
-            <li><span>天气</span><b>暴雨 · 能见度 46m</b></li>
+            <li><span>天气</span><b>海雾 · 能见度 46m</b></li>
             <li><span>时刻</span><b>23:41 — 夜</b></li>
             <li><span>照明</span><b>降级 · 局部供电</b></li>
             <li><span>地形</span><b>集装箱堆场 / 三号仓 / 调度楼</b></li>
@@ -521,6 +520,18 @@
       ? '<i class="ok">✓ 已注册</i> (' + dbg.actions.length + ' 个: ' + dbg.actions.join(' / ') + ')'
       : '<i class="bad">✗ 未注册</i>（游戏脚本没有运行）');
     html += line('页面按钮', total + ' 个 [data-action]');
+    /* 构建标记：只有经典脚本（打包产物）才有 __SM_BUILD，直接读全局，
+       因此单文件内联版与 dist 经典脚本两种情况都能覆盖。
+       版本不一致 ⇒ 引导脚本与游戏包来自不同的构建，必须标红。
+       注意：同版本下的内容陈旧（改了 src 没重新构建）运行时无法判断，
+       那条由 `npm test` 里的 check-dist 用输入哈希兜住。 */
+    var build = window.__SM_BUILD;
+    if (build) {
+      var skew = build.v !== V;
+      html += line('构建标记', skew
+        ? '<i class="bad">✗ 版本不一致：包 v' + build.v + ' / 页面 v' + V + '（请执行 node build.mjs）</i>'
+        : '<i class="ok">✓ v' + build.v + '</i> · ' + build.hash);
+    }
     html += line('指针锁定', document.pointerLockElement ? '<i class="warn">是</i>（点按钮前按 Alt）' : '否');
     html += line('累计点击', dbg.clickCount + ' 次');
     if (dbg.perf) {
@@ -551,9 +562,12 @@
     var locked = !!document.pointerLockElement;
     /* D 键归属规则：
        - 行动中（含 Alt 光标模式、调参面板打开时）D 属于游戏，必须能右平移；
-       - 只有不在行动中（主菜单/简报/配装/战果）才用 D 开关本调试面板。
+       - 不在行动中（主菜单/简报/配装/战果）以及「暂停菜单」才用 D 开关本调试面板。
+       注意：暂停菜单不会改变 game.state（仍是 'play'），所以必须额外看 paused，
+       否则暂停时 D 既开不了面板、又因为时间冻结而平移不了，变成一个死键。
        使用 ~（Backquote）则任何状态都能开关面板。 */
-    var playing = !!(window.__game && window.__game.state === 'play');
+    var g = window.__game;
+    var playing = !!(g && g.state === 'play' && !g.paused);
     var byD = e.code === 'KeyD' && !locked && !playing && !e.ctrlKey && !e.metaKey;
     var byTilde = e.code === 'Backquote';
     if (!byD && !byTilde) return;

@@ -1,5 +1,8 @@
+/* 一次性构建期使用的复用查询缓冲（避免在候选点循环里反复新建数组） */
+const _coverScratch = [];
+
 /* ============================================================
-   world.js — 原创港区布局 / 光照 / 雨夜氛围
+   world.js — 原创港区布局 / 光照 / 海雾夜氛围
    坐标：X 向东，-Z 向北（码头方向），+Y 向上，单位米
    ============================================================ */
 import * as THREE from 'three';
@@ -25,7 +28,14 @@ function nonIndexed(g) {
 }
 
 class Batcher {
-  constructor() { this.b = new Map(); }
+  constructor() {
+    this.b = new Map();
+    /* add() 用的复用临时量 */
+    this._nm = new THREE.Matrix3();
+    this._v = new THREE.Vector3();
+    this._vn = new THREE.Vector3();
+    this._c = new THREE.Color();
+  }
   _b(name) {
     let o = this.b.get(name);
     if (!o) this.b.set(name, (o = { pos: [], nor: [], col: [], uv: [] }));
@@ -37,9 +47,9 @@ class Batcher {
     const n = src.attributes.normal.array;
     const u = src.attributes.uv ? src.attributes.uv.array : null;
     const o = this._b(name);
-    const nm = new THREE.Matrix3().getNormalMatrix(matrix);
-    const v = new THREE.Vector3(), vn = new THREE.Vector3();
-    const c = new THREE.Color(color);
+    /* 复用的临时量：原先每次 add() 都新建 Matrix3 + 2×Vector3 + Color */
+    const nm = this._nm.getNormalMatrix(matrix);
+    const v = this._v, vn = this._vn, c = this._c.set(color);
     for (let i = 0; i < p.length; i += 3) {
       v.set(p[i], p[i + 1], p[i + 2]).applyMatrix4(matrix);
       vn.set(n[i], n[i + 1], n[i + 2]).applyMatrix3(nm).normalize();
@@ -47,7 +57,12 @@ class Batcher {
       o.nor.push(vn.x, vn.y, vn.z);
       o.col.push(c.r, c.g, c.b);
     }
-    if (u) o.uv.push(...u); else for (let i = 0; i < p.length / 3; i++) o.uv.push(0, 0);
+    /* 不用 o.uv.push(...u)：参数展开在 u 较长时会爆栈，且逐元素 push 更慢 */
+    if (u) {
+      for (let i = 0; i < u.length; i++) o.uv.push(u[i]);
+    } else {
+      for (let i = 0; i < p.length / 3; i++) o.uv.push(0, 0);
+    }
   }
   build(materials, parent, castShadow = true, receiveShadow = true) {
     const out = [];
@@ -244,7 +259,10 @@ function buildEnvironment(renderer) {
   const rt = pmrem.fromEquirectangular(tex);
   pmrem.dispose();
   tex.dispose();
-  return rt.texture;
+  /* 返回 render target 本身，而不是只返回 rt.texture：
+     把 RT 丢掉之后它的 framebuffer / 纹理就再也无法释放，
+     每次重新部署都会净增若干纹理与 framebuffer。 */
+  return rt;
 }
 
 /* 夜空渐变（等距圆柱背景） */
@@ -288,78 +306,6 @@ function buildSkyTexture() {
   return t;
 }
 
-/* ============================================================
-   雨
-   ============================================================ */
-function buildRain(scene, count = 5200, area = 74, height = 34) {
-  const pos = new Float32Array(count * 2 * 3);
-  const top = new Float32Array(count * 2);
-  const spd = new Float32Array(count * 2);
-  const rnd = makeRng(7);
-  for (let i = 0; i < count; i++) {
-    const x = (rnd.next() - 0.5) * area;
-    const z = (rnd.next() - 0.5) * area;
-    const y = rnd.next() * height;
-    const s = 0.72 + rnd.next() * 0.62;
-    for (let k = 0; k < 2; k++) {
-      const j = (i * 2 + k) * 3;
-      pos[j] = x; pos[j + 1] = y; pos[j + 2] = z;
-      top[i * 2 + k] = k;
-      spd[i * 2 + k] = s;
-    }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('aTop', new THREE.BufferAttribute(top, 1));
-  geo.setAttribute('aSpeed', new THREE.BufferAttribute(spd, 1));
-  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), area);
-
-  const mat = new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uH: { value: height },
-      uLen: { value: 1.35 },
-      uWind: { value: new THREE.Vector2(-0.16, 0.05) },
-      uColor: { value: new THREE.Color(0xdcecf8) },
-      uOpacity: { value: 0.34 },
-    },
-    vertexShader: /* glsl */`
-      attribute float aTop;
-      attribute float aSpeed;
-      uniform float uTime, uH, uLen;
-      uniform vec2 uWind;
-      varying float vFade;
-      void main(){
-        vec3 p = position;
-        float fall = uTime * 26.0 * aSpeed;
-        p.y = mod(p.y - fall, uH);
-        float len = uLen * (0.55 + aSpeed * 0.75);
-        p.x += aTop * uWind.x * len;
-        p.z += aTop * uWind.y * len;
-        p.y += aTop * len;
-        vFade = 1.0 - smoothstep(0.0, uH, p.y) * 0.0;
-        vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        gl_Position = projectionMatrix * mv;
-        vFade = clamp(1.0 - (-mv.z) / 78.0, 0.05, 1.0);
-      }`,
-    fragmentShader: /* glsl */`
-      uniform vec3 uColor; uniform float uOpacity;
-      varying float vFade;
-      void main(){
-        gl_FragColor = vec4(uColor, uOpacity * vFade);
-      }`,
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  });
-  const lines = new THREE.LineSegments(geo, mat);
-  lines.frustumCulled = false;
-  lines.renderOrder = 6;
-  scene.add(lines);
-  return { mesh: lines, mat, height, area };
-}
-
-/* ============================================================
-   灯光
-   ============================================================ */
 function glowTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
@@ -383,8 +329,12 @@ export function buildWorld(scene, renderer) {
   const rng = L.rng;
 
   scene.fog = new THREE.FogExp2(0x0a141d, 0.0158);
-  scene.background = buildSkyTexture();
-  scene.environment = buildEnvironment(renderer);
+  /* 背景贴图与环境贴图都不在场景图里，scene.traverse 扫不到它们，
+     必须显式持有引用并在 disposeMission 里释放。 */
+  const skyTex = buildSkyTexture();
+  scene.background = skyTex;
+  const envRT = buildEnvironment(renderer);
+  scene.environment = envRT.texture;
 
   /* ---------------- 材质 ---------------- */
   const asphalt = TX.asphaltTexture();
@@ -442,7 +392,10 @@ export function buildWorld(scene, renderer) {
 
   /* ---------------- 围栏 ---------------- */
   const fenceMat = new THREE.MeshStandardMaterial({
-    map: TX.fenceTexture(), transparent: true, alphaTest: 0.28, side: THREE.DoubleSide,
+    /* 有 alphaTest 就足以裁掉网眼，不需要 transparent:true。
+       一旦标成 transparent，网格会被丢进透明队列：每帧参与排序、
+       失去深度预写、与被遮挡物之间的绘制顺序也不可靠。 */
+    map: TX.fenceTexture(), transparent: false, alphaTest: 0.28, side: THREE.DoubleSide,
     color: 0x8b98a4, metalness: 0.7, roughness: 0.5, depthWrite: true,
   });
   fenceMat.map.repeat.set(1, 1);
@@ -634,11 +587,12 @@ export function buildWorld(scene, renderer) {
   // 醒目编号贴片
   const codes = ['KRGU 214 388-7', 'KRGU 771 042-3', 'KRGU 508 619-1', 'KRGU 330 774-5', 'KRGU 662 190-8'];
   const decalMat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.24 });
+  const decalGeo = new THREE.PlaneGeometry(11.4, 2.1);   // 所有贴片尺寸相同，几何体共享
   containers.slice(0, 9).forEach((c, i) => {
     const t = TX.containerCodeTexture('#' + new THREE.Color(CONT_COLORS[i % 6]).getHexString(), codes[i % codes.length]);
     const mm = decalMat.clone(); mm.map = t;
     for (let side = 0; side < 2; side++) {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(11.4, 2.1), mm);
+      const m = new THREE.Mesh(decalGeo, mm);
       const off = 1.25 * (side ? 1 : -1);
       m.position.set(c.x + (c.rot ? off : 0), 1.35, c.z + (c.rot ? 0 : off));
       m.rotation.y = c.rot ? (side ? 0 : Math.PI) : (side ? Math.PI / 2 : -Math.PI / 2);
@@ -679,11 +633,12 @@ export function buildWorld(scene, renderer) {
     new THREE.MeshStandardMaterial({ color: 0x1d232a, roughness: 0.8, metalness: 0.3 }));
   fun.position.set(42, 26, -104);
   scene.add(fun);
+  /* 几何体与材质提到循环外：原先 5 次迭代各建一份完全相同的 BoxGeometry+Material */
+  const mastGeo = new THREE.BoxGeometry(0.6, 12, 0.6);
+  const mastMat = new THREE.MeshStandardMaterial({ color: 0x232a31, roughness: .8, metalness: .4 });
   for (let i = 0; i < 5; i++) {
-    const lx = -60 + i * 22;
-    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.6, 12, 0.6),
-      new THREE.MeshStandardMaterial({ color: 0x232a31, roughness: .8, metalness: .4 }));
-    mast.position.set(lx, 15, -104);
+    const mast = new THREE.Mesh(mastGeo, mastMat);
+    mast.position.set(-60 + i * 22, 15, -104);
     scene.add(mast);
   }
   const shipName = new THREE.Mesh(new THREE.PlaneGeometry(30, 3),
@@ -759,7 +714,7 @@ export function buildWorld(scene, renderer) {
     L.box(x - 0.5, x + 0.5, 9.2, 9.45, z - 0.5, z + 0.5, { color: 0x2c3238, bucket: 'metal', collide: false });
     L.box(x - 0.45, x + 0.45, 8.95, 9.2, z - 0.45, z + 0.45,
       { color: 0xffd39a, bucket: 'lamp', collide: false });
-    const sp = new THREE.Sprite(lampGlowMat.clone());
+    const sp = new THREE.Sprite(lampGlowMat);   // 11 盏灯的辉光完全一致，无需逐盏 clone
     sp.position.set(x, 9.0, z);
     sp.scale.set(7, 7, 1);
     scene.add(sp);
@@ -769,16 +724,46 @@ export function buildWorld(scene, renderer) {
   const puddleMat = new THREE.MeshStandardMaterial({
     color: 0x070d13, roughness: 0.03, metalness: 1.0, transparent: true, opacity: 0.9,
     envMapIntensity: 2.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    /* 合并后的三角形绕序取决于水洼自身的朝向，单面渲染会随机漏面；
+       水平面片开双面几乎不增加开销。 */
+    side: THREE.DoubleSide,
   });
-  for (let i = 0; i < 46; i++) {
-    const x = rng.range(-68, 68), z = rng.range(-62, 48);
-    const r = rng.range(0.7, 3.6);
-    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 14), puddleMat);
-    m.rotation.x = -Math.PI / 2;
-    m.rotation.z = rng.range(0, 6.28);
-    m.position.set(x, 0.012 + i * 0.00005, z);
-    m.scale.set(1, rng.range(0.5, 1.0), 1);
-    scene.add(m);
+  /* 46 个独立 Mesh 意味着 46 次透明 draw call，且每帧都要参与透明排序。
+     这里在构建期把它们烘成一个合并几何体，运行期只剩 1 次 draw call。
+     每个水洼是一个半径 r、沿局部 Y 缩放 sy、再绕 Z 旋转 φ 的圆：
+     CircleGeometry 位于 XY 平面朝 +Z，经 rotation.x = -90° 后落到地面，
+     局部 (x, y, 0) → 世界 (x, 0, -y)，所以这里直接按该映射算世界顶点。 */
+  {
+    const SEG = 14, N = 46;
+    const pos = new Float32Array(N * SEG * 3 * 3);
+    const nrm = new Float32Array(N * SEG * 3 * 3);
+    let o = 0;
+    for (let i = 0; i < N; i++) {
+      const cx = rng.range(-68, 68), cz = rng.range(-62, 48);
+      const r = rng.range(0.7, 3.6);
+      const phi = rng.range(0, 6.28), sy = rng.range(0.5, 1.0);
+      const cy = 0.012 + i * 0.00005;          // 逐片微抬，避免互相 z-fighting
+      const cosP = Math.cos(phi), sinP = Math.sin(phi);
+      for (let k = 0; k < SEG; k++) {
+        const a0 = (k / SEG) * 6.283185307179586;
+        const a1 = ((k + 1) / SEG) * 6.283185307179586;
+        const lx0 = Math.cos(a0) * r, ly0 = Math.sin(a0) * r * sy;
+        const lx1 = Math.cos(a1) * r, ly1 = Math.sin(a1) * r * sy;
+        pos[o] = cx; pos[o + 1] = cy; pos[o + 2] = cz;
+        pos[o + 3] = cx + lx0 * cosP - ly0 * sinP; pos[o + 4] = cy; pos[o + 5] = cz - (lx0 * sinP + ly0 * cosP);
+        pos[o + 6] = cx + lx1 * cosP - ly1 * sinP; pos[o + 7] = cy; pos[o + 8] = cz - (lx1 * sinP + ly1 * cosP);
+        for (let v = 0; v < 3; v++) { nrm[o + v * 3] = 0; nrm[o + v * 3 + 1] = 1; nrm[o + v * 3 + 2] = 0; }
+        o += 9;
+      }
+    }
+    const puddleGeo = new THREE.BufferGeometry();
+    puddleGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    puddleGeo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    /* 保留视锥裁剪：three 会按需计算包围球。整片水洼横跨场地，
+       面向场地时基本不会被裁掉，但背对时可以整体剔除。
+       （不要图省事写 frustumCulled=false —— 那会让 644 个三角形每帧都提交。） */
+    const puddles = new THREE.Mesh(puddleGeo, puddleMat);
+    scene.add(puddles);
   }
 
   /* ---------------- 贴花：地面标线 ---------------- */
@@ -821,8 +806,6 @@ export function buildWorld(scene, renderer) {
   const fillD = new THREE.PointLight(0xa8dcff, 46, 34, 1.9); fillD.position.set(44, 5.0, -32); scene.add(fillD);
   const fillB = new THREE.PointLight(0xbfe2ff, 36, 32, 1.9); fillB.position.set(36, 6.0, 22); scene.add(fillB);
   const fillOff = new THREE.PointLight(0xffe0b0, 16, 16, 2.0); fillOff.position.set(-28, 2.7, -21.4); scene.add(fillOff);
-  const lightning = new THREE.AmbientLight(0xbcd8f0, 0.0);
-  scene.add(lightning);
 
   /* ---------------- 构建批次 ---------------- */
   const batchMeshes = L.batch.build(mats, scene, true, true);
@@ -850,7 +833,7 @@ export function buildWorld(scene, renderer) {
     }
     for (const [x, z, face] of cands) {
       if (x < -74 || x > 74 || z < -64 || z > 48) continue;
-      const hits = grid.queryCircle(x, z, 0.55, []);
+      const hits = grid.queryCircle(x, z, 0.55, _coverScratch);
       let blocked = false;
       for (const o of hits) {
         if (o === b) continue;
@@ -918,44 +901,29 @@ export function buildWorld(scene, renderer) {
   ];
 
   /* ---------------- 更新 ---------------- */
-  const rain = buildRain(scene);
   let t = 0;
-  let nextLightning = 18 + rng.range(0, 26);
-  let lightningT = -1;
-  const thunderCb = [];
+  /* 阴影贴图的纹素尺寸：阴影相机跟随相机移动时必须按它对齐。
+     不对齐的话光源每帧都在做亚纹素移动，导致阴影边缘持续抖动（shimmer）
+     且与静态几何之间出现游移的锯齿。 */
+  const SHADOW_TEXEL = (moon.shadow.camera.right - moon.shadow.camera.left) / moon.shadow.mapSize.x;
 
   function update(dt, camPos) {
     t += dt;
-    rain.mat.uniforms.uTime.value = t;
-    rain.mesh.position.set(Math.round(camPos.x), 0, Math.round(camPos.z));
-    // 阴影相机跟随
-    moon.position.set(camPos.x + 38, 62, camPos.z - 26);
-    moon.target.position.set(camPos.x, 0, camPos.z);
+    /* 阴影相机跟随：锚点量化到纹素网格，光源与目标的相对偏移保持不变
+       （平行光方向恒定），阴影贴图内容因此不会逐帧游移。 */
+    const ax = Math.round(camPos.x / SHADOW_TEXEL) * SHADOW_TEXEL;
+    const az = Math.round(camPos.z / SHADOW_TEXEL) * SHADOW_TEXEL;
+    moon.position.set(ax + 38, 62, az - 26);
+    moon.target.position.set(ax, 0, az);
     moon.target.updateMatrixWorld();
-    // 闪电
-    if (lightningT < 0 && t > nextLightning) {
-      lightningT = 0;
-      nextLightning = t + 26 + rng.range(0, 34);
-      thunderCb.forEach((cb) => cb());
-    }
-    if (lightningT >= 0) {
-      lightningT += dt;
-      const p = lightningT;
-      let v = 0;
-      if (p < 0.09) v = 1 - p / 0.09;
-      else if (p < 0.16) v = 0.15;
-      else if (p < 0.30) v = 0.75 * (1 - (p - 0.16) / 0.14);
-      lightning.intensity = v * 1.5;
-      if (p > 0.34) { lightningT = -1; lightning.intensity = 0; }
-    }
   }
 
   return {
     grid, level: L, batchMeshes, mats, covers, coverIdx,
     objectives, zones, safeZone, spawns, suspects, civilians, containers,
-    lights: { hemi, moon, lampLights, lightning, fills: [fillA, fillB, fillD] },
-    rain, update,
-    onThunder: (cb) => thunderCb.push(cb),
+    skyTex, envRT,                       // 不在场景图内，交由 disposeMission 释放
+    lights: { hemi, moon, lampLights, fills: [fillA, fillB, fillD] },
+    update,
     bounds: WORLD.bounds,
   };
 }

@@ -29,6 +29,10 @@ await page.evaluateOnNewDocument(() => {
     seed ^= seed << 5; seed >>>= 0;
     return seed / 4294967296;
   };
+  /* 供基准脚本在「随机敏感的测量点」前把随机流钉到固定位置。
+     没有这个的话，任何在别处改变了 Math.random 消费次数的改动（例如 AI 逻辑）
+     都会让 recoil.yawSeq 整段错位 —— 那测的是「随机流位置」，不是后坐力逻辑。 */
+  window.__reseed = (v = 0x2f6e2b1) => { seed = v >>> 0; window.__randCalls = 0; };
 });
 await page.goto('http://127.0.0.1:8209/?deploy=1&test=1', { waitUntil: 'load' });
 await new Promise((r) => setTimeout(r, 2600));   // ?test=1 已冻结 rAF 步进，热身不再引入随机流漂移
@@ -125,7 +129,13 @@ const data = await page.evaluate(() => {
   };
   out.recoil = {
     pitchAfter: [1, 2, 3, 5, 8, 13].map(pitchAfter),
-    yawSeq: (() => { reset(); P.logShots = true; for (let i = 0; i < 5; i++) { P.fireCd = 0; P.fireOnce(); } return P.shotLog.map((v) => r8(v.y)); })(),
+    /* 水平后坐力逐发取自 Math.random，因此先把随机流钉到固定位置再测，
+       否则这段序列会被「别处多消耗了几次随机数」整体推移。 */
+    yawSeq: (() => {
+      reset(); window.__reseed(0x51ed); P.logShots = true;
+      for (let i = 0; i < 5; i++) { P.fireCd = 0; P.fireOnce(); }
+      return P.shotLog.map((v) => r8(v.y));
+    })(),
   };
   reset();
   for (let i = 0; i < 5; i++) { P.fireCd = 0; P.fireOnce(); }
@@ -212,13 +222,23 @@ if (mode === 'capture') {
     if (a !== b) diffs.push(path + ': ' + JSON.stringify(a) + ' -> ' + JSON.stringify(b));
   };
   walk(old, data, '');
+  /* meta.* 是「随机流位置」之类的诊断量，不是手感指标。
+     任何在别处改变了 Math.random 消费次数的改动都会让它变化，
+     若把它算作回归，「手感基线变红」就会变成噪声 —— 只报告、不判失败。
+     （recoil.yawSeq 已在采集前用 __reseed 钉住随机流，因此仍可作为硬断言。） */
+  const feelDiffs = diffs.filter((d) => !d.startsWith('meta.'));
+  const infoDiffs = diffs.filter((d) => d.startsWith('meta.'));
   console.log('');
   console.log('===== 手感回归比对 =====');
-  if (!diffs.length) console.log('[PASS] 完全一致：所有指标与基线逐位相同（行为零变化）');
+  if (!feelDiffs.length) console.log('[PASS] 手感指标与基线逐位相同（行为零变化）');
   else {
-    console.log('[FAIL] 发现 ' + diffs.length + ' 处差异：');
-    diffs.slice(0, 40).forEach((d) => console.log('   ' + d));
+    console.log('[FAIL] 发现 ' + feelDiffs.length + ' 处手感差异：');
+    feelDiffs.slice(0, 40).forEach((d) => console.log('   ' + d));
   }
-  suite.check('手感指标与基线逐位一致', diffs.length === 0, diffs.slice(0, 3).join(' | '));
+  if (infoDiffs.length) {
+    console.log('[info] ' + infoDiffs.length + ' 处诊断量变化（不计入失败）：');
+    infoDiffs.slice(0, 6).forEach((d) => console.log('   ' + d));
+  }
+  suite.check('手感指标与基线逐位一致', feelDiffs.length === 0, feelDiffs.slice(0, 3).join(' | '));
   await suite.finish();   // 页面异常在这里一并计入退出码（原先的打印在 exit 之后，永远不可达）
 }

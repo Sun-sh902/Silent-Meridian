@@ -16,18 +16,21 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
 const node = process.execPath;
 
-/* Chrome 预检：缺失直接退出 2，避免 7 次重复报错 */
+/* Chrome 预检：缺失直接退出 2，避免每个套件各报一次 */
 const chrome = resolveChromePath();
 console.log('[run-all] Chrome: ' + chrome);
 if (!existsSync(join(ROOT, 'dist', 'silent-meridian.html'))) {
-  console.log('[run-all] 提示：dist/ 不存在，click-test 的「单文件版」与 file:// 场景会失败。');
-  console.log('           先执行 node build.mjs 可生成。');
+  console.log('[run-all] 提示：dist/ 不存在 —— check-dist 会直接失败，');
+  console.log('           click-test 的「单文件版」与 file:// 场景也会失败。');
+  console.log('           修复： node build.mjs');
 }
 
 const SUITES = [
+  ['check-dist',        ['tools/check-dist.mjs']],
   ['click-test',        ['tools/click-test.mjs']],
   ['fixes-test',        ['tools/fixes-test.mjs']],
   ['p0-test',           ['tools/p0-test.mjs']],
+  ['p1-test',           ['tools/p1-test.mjs']],
   ['map-test',          ['tools/map-test.mjs']],
   ['tuning-test',       ['tools/tuning-test.mjs']],
   ['responsive-test',   ['tools/responsive-test.mjs']],

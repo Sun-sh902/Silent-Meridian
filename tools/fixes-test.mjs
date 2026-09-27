@@ -26,7 +26,7 @@ const frames = (n = 2) => page.evaluate((k) => new Promise((res) => {
 const results = suite.results;
 const check = (name, ok, detail) => suite.check(name, ok, detail);
 
-/* ============ 1. 备战界面环境声 ============ */
+/* ============ 1. 备战界面不得有持续音 ============ */
 await page.goto('http://127.0.0.1:8204/', { waitUntil: 'load' });
 await wait(800);
 
@@ -38,20 +38,17 @@ await wait(400);
 let a = await page.evaluate(() => ({
   ctxCount: window.__game.audio.stats().ctxCount,
   state: window.__game.audio.ctx ? window.__game.audio.ctx.state : 'none',
-  rain: !!window.__game.audio.rainNodes,
-  ambience: !!window.__game.audio._ambience,
+  live: window.__game.audio.stats().liveNodes,
 }));
 check('备战界面：音频上下文已建立（按钮音效可用）', a.ctxCount === 1, `ctxCount=${a.ctxCount} state=${a.state}`);
-check('备战界面：没有环境背景声（雨声未启动）', a.rain === false && a.ambience === false,
-  `rainNodes=${a.rain} ambience=${a.ambience}`);
+/* 注意：这里原本断言「雨声未启动」。雨与环境声已整体移除，
+   但真正要守的不变量是「菜单里不得有持续音在响」——
+   当初的缺陷（备战界面能听到港区环境音）本质就是持续音没有随界面切换而释放。
+   因此改为直接检查在用音频节点数。 */
+check('备战界面：没有持续音在播放', a.live === 0, `liveNodes=${a.live}`);
 
 await page.click('#btn-deploy');
 await wait(2600);
-a = await page.evaluate(() => ({
-  rain: !!window.__game.audio.rainNodes,
-  ambience: !!window.__game.audio._ambience,
-}));
-check('进入行动：环境声已开启', a.rain === true && a.ambience === true, `rainNodes=${a.rain}`);
 
 /* ============ 2. 面向队友 → 显示为队友 ============ */
 await page.evaluate(() => {
@@ -155,14 +152,18 @@ const tacrender = await page.evaluate(() => {
 });
 check('战术地图渲染无异常（含事件层）', tacrender === 'ok', tacrender);
 
-/* ============ 5. 撤离行动后环境声应停止 ============ */
-const off = await page.evaluate(() => {
+/* ============ 5. 撤离行动后不得有残留持续音 ============ */
+await page.evaluate(() => {
   const g = window.__game;
   g.toggleTacMap();
   g.abort();
-  return { rain: !!g.audio.rainNodes, ambience: !!g.audio._ambience };
 });
-check('返回主菜单：环境声已停止', off.rain === false && off.ambience === false,
-  `rainNodes=${off.rain} ambience=${off.ambience}`);
+await wait(900);   // 给调用方一点时间让短音效自然结束
+const off = await page.evaluate(() => ({
+  live: window.__game.audio.stats().liveNodes,
+  ctxCount: window.__game.audio.stats().ctxCount,
+}));
+check('返回主菜单：无残留音频节点（持续音已全部释放）', off.live === 0, `liveNodes=${off.live}`);
+check('返回主菜单：AudioContext 恒为 1（未重复创建）', off.ctxCount === 1, `ctxCount=${off.ctxCount}`);
 
 await suite.finish();

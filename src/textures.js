@@ -57,28 +57,6 @@ export function concreteTexture() {
 }
 
 /* ---------------- 集装箱侧板 ---------------- */
-export function containerTexture(color = '#3d5a52') {
-  const c = mkCanvas(256, 256), g = c.getContext('2d');
-  g.fillStyle = color; g.fillRect(0, 0, 256, 256);
-  // 波纹
-  for (let x = 0; x < 256; x += 16) {
-    const shade = 0.10 + 0.16 * Math.abs(Math.sin(x * 0.4));
-    g.fillStyle = `rgba(0,0,0,${shade})`;
-    g.fillRect(x, 0, 8, 256);
-    g.fillStyle = 'rgba(255,255,255,.045)';
-    g.fillRect(x + 8, 0, 2, 256);
-  }
-  // 锈迹
-  for (let i = 0; i < 130; i++) {
-    const x = Math.random() * 256, y = Math.random() * 256;
-    const r = 2 + Math.random() * 12;
-    const grd = g.createRadialGradient(x, y, 0, x, y, r);
-    grd.addColorStop(0, `rgba(${70 + Math.random() * 40},${40 + Math.random() * 20},20,.30)`);
-    grd.addColorStop(1, 'rgba(70,40,20,0)');
-    g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
-  }
-  return toTex(c, [1, 1]);
-}
 
 /* ---------------- 铁丝网 ---------------- */
 export function fenceTexture() {
@@ -95,24 +73,6 @@ export function fenceTexture() {
 }
 
 /* ---------------- 建筑墙面（带污渍） ---------------- */
-export function wallTexture(base = '#2f3742') {
-  const c = mkCanvas(256, 256), g = c.getContext('2d');
-  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 2600; i++) {
-    const v = Math.random() * 40;
-    g.fillStyle = `rgba(${20 + v},${24 + v},${30 + v},${0.05 + Math.random() * 0.18})`;
-    g.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 3, 1 + Math.random() * 3);
-  }
-  // 水渍条纹
-  for (let i = 0; i < 22; i++) {
-    const x = Math.random() * 256, w = 3 + Math.random() * 16;
-    const grd = g.createLinearGradient(0, 0, 0, 256);
-    grd.addColorStop(0, 'rgba(8,10,14,.32)');
-    grd.addColorStop(1, 'rgba(8,10,14,0)');
-    g.fillStyle = grd; g.fillRect(x, 0, w, 256);
-  }
-  return toTex(c, [4, 4]);
-}
 
 /* ---------------- 虚构品牌招牌 ---------------- */
 export function signTexture(main, sub, opts = {}) {
@@ -184,17 +144,6 @@ export function containerCodeTexture(color, code) {
 }
 
 /* ---------------- 门禁 / 警示 ---------------- */
-export function hazardTexture() {
-  const c = mkCanvas(256, 64), g = c.getContext('2d');
-  g.fillStyle = '#1a1c20'; g.fillRect(0, 0, 256, 64);
-  g.fillStyle = '#e8c247';
-  for (let i = -64; i < 320; i += 42) {
-    g.beginPath();
-    g.moveTo(i, 64); g.lineTo(i + 21, 64); g.lineTo(i + 21 + 64, 0); g.lineTo(i + 64, 0);
-    g.closePath(); g.fill();
-  }
-  return toTex(c, [1, 1]);
-}
 
 /* ---------------- 舱窗 / 舷灯 ---------------- */
 export function shipHullTexture() {

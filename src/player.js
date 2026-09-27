@@ -3,7 +3,7 @@
    ============================================================ */
 import * as THREE from 'three';
 import { Actor } from './actors.js';
-import { clamp, angleDamp, dist2D, TAU } from './geom.js';
+import { clamp, angleDamp, damp, dist2D, TAU } from './geom.js';
 import { castRay } from './combat.js';
 import { WEAPONS, GADGETS, ARMORS, TUNING } from './data.js';
 import { feel } from './feel.js';
@@ -118,8 +118,11 @@ export class Player extends Actor {
     }
 
     /* --- 射击 --- */
-    if (this.fireCd > 0) this.fireCd -= dt;
-    if (this.blind > 0) this.blind -= dt;
+    /* fireCd 与 blind 已由本帧开头的 updateCommon(dt) 递减过了（actors.js）。
+       这里曾经再减一次，等于每帧递减 2×dt：
+         · 射速翻倍（MR-4 标称 640rpm 实测 ~1280rpm）
+         · 闪光弹致盲时长被砍半（2.5~7s 只剩 1.25~3.5s）
+       不要再在这里递减。 */
     const canFire = this.alive && this.reloading <= 0 && this.fireCd <= 0 && this.blind <= 0;
     const d = this.def;
     if ((input.lmb || input.lmbPressed) && canFire && !g.paused) {
@@ -318,7 +321,10 @@ export class Player extends Actor {
   }
 
   /* ---------------- 相机 ---------------- */
-  applyCamera(camera) {
+  /* dt 必须传进来：FOV 过渡用 damp() 而不是「每帧乘以固定比例」。
+     原来的 `camera.fov += (target - camera.fov) * 0.18` 在 144Hz 下收敛速度是
+     60Hz 的 ~2.4 倍 —— 视场角过渡、开镜手感会随显示器刷新率变化。 */
+  applyCamera(camera, dt = 1 / 60) {
     if (!this.alive) {
       // 倒地视角
       camera.position.set(this.pos.x, 0.42, this.pos.z);
@@ -326,7 +332,7 @@ export class Player extends Actor {
       camera.rotateY(this.yaw);
       camera.rotateX(-0.22);
       camera.rotateZ(1.15);
-      camera.fov += (78 - camera.fov) * 0.12;
+      camera.fov = damp(camera.fov, 78, 7.7, dt);   // 等效 60fps 下的 0.12
       camera.updateProjectionMatrix();
       return;
     }
@@ -342,7 +348,7 @@ export class Player extends Actor {
     const adsFov = feel.camera.adsFovOverride > 0 ? feel.camera.adsFovOverride : this.def.adsFov;
     const targetFov = this.ads > feel.move.adsGate ? adsFov
       : (this.stance === 'sprint' ? feel.camera.fovSprint : feel.camera.fovDefault);
-    camera.fov += (targetFov - camera.fov) * 0.18;
+    camera.fov = damp(camera.fov, targetFov, 11.9, dt);   // 等效 60fps 下的 0.18
     camera.updateProjectionMatrix();
   }
 }

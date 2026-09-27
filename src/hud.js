@@ -51,6 +51,7 @@ export class HUD {
       cursorHint: $('#cursor-hint'),
       damage: $('#damage-flash'),
       grade: $('#grade'),
+      whiteout: $('#whiteout'),   // 缓存：flash() 原本每次调用都重新 getElementById
     };
     this.ctxCompass = this.el.compass.getContext('2d');
     this.ctxMini = this.el.minimap.getContext('2d');
@@ -72,10 +73,47 @@ export class HUD {
     this.drawnLabels = [];      // 本帧真正画出的地名（供 __mapDebug 回查）
     this.drawnN = 0;
     this.labelStats = { total: 0, drawn: 0, rejected: 0, edge: 0 };
+    /* 逐帧写入缓存：只有值真的变化时才碰 DOM。
+       实测（tools/perf-probe.mjs）此前每帧约 27 次 DOM 变更、55 次布局读取，
+       其中绝大多数是把同一个字符串/类名重复写一遍 —— 每次都产生一条
+       mutation record 并可能触发样式重算。 */
+    this._w = Object.create(null);
+    this._roster = [];                   // 复用的花名册缓冲，避免每帧展开分配
+    this._intTick = 0;
+    this._intCache = null;
     this.buildMiniStatic();
     this.buildZoneItems();
     /* 3. canvas 尺寸随布局变化重算（含浏览器缩放导致的 DPR 变化） */
     this.sizeWatch = watchResize(document.getElementById('hud') || document.body, () => this.onResize());
+  }
+
+  /* ------------------------------------------------------------
+     写入缓存辅助：写入前先比对，相同则完全跳过（不产生 DOM 变更）
+     ------------------------------------------------------------ */
+  _text(key, el, val) {
+    const s = String(val);
+    if (this._w[key] === s) return;
+    this._w[key] = s;
+    el.textContent = s;
+  }
+  _width(key, el, pct) {
+    const s = pct + '%';
+    if (this._w[key] === s) return;
+    this._w[key] = s;
+    el.style.width = s;
+  }
+  /* classList.toggle 本身幂等（无变化则不产生 mutation），这里只做短路省掉调用开销 */
+  _cls(key, el, name, on) {
+    const k = key + '|' + name;
+    if (this._w[k] === on) return;
+    this._w[k] = on;
+    el.classList.toggle(name, on);
+  }
+  /* 缓存的 canvas CSS 尺寸：由 drawMinimap 每帧写入一次，供 worldToMap 复用 */
+  _syncCanvasSize() {
+    const cv = this.el.minimap;
+    this._W = cv.clientWidth || 1;
+    this._H = cv.clientHeight || 1;
   }
 
   /* ------------------------------------------------------------
@@ -139,10 +177,12 @@ export class HUD {
      ------------------------------------------------------------ */
   worldToMap(wx, wz, out) {
     const p = this.game.player;
-    const cv = this.el.minimap;
-    const W = cv.clientWidth || this._W || 1;
-    const H = cv.clientHeight || this._H || 1;
-    /* 直接用实时状态计算，不依赖上一帧的缓存值
+    /* 尺寸走缓存：drawMinimap 每帧只读一次布局并写入 _W/_H。
+       此前这里每次调用都读 clientWidth/clientHeight，而本函数每帧被调用
+       约 25 次（任务点 + 事件 + 全部演员 + 地名），是每帧 50+ 次布局读取的主因。 */
+    if (!this._W || !this._H) this._syncCanvasSize();
+    const W = this._W, H = this._H;
+    /* 角度仍用实时 yaw，不依赖上一帧缓存
        （否则外部改完 yaw 立刻查询会拿到旧角度） */
     const k = (W / 2) / this.miniRange;
     const C = Math.cos(p.yaw), S = Math.sin(p.yaw);
@@ -204,16 +244,23 @@ export class HUD {
     this.setCursorMode(!!game.cursorMode);
     this.el.reticle.classList.toggle('ads', p.ads > 0.5);
     const ringR = 42 * 2 * Math.PI;
-    this.el.observeFg.style.strokeDasharray = ringR;
-    this.el.observeFg.style.strokeDashoffset = ringR * (1 - (game.observeTarget ? game.observeTarget.ident : 0));
+    /* stroke-dasharray 已是 ui.css 里的静态值（264），不必每帧重写；
+       只有 dashoffset 随识别进度连续变化。 */
+    const off = ringR * (1 - (game.observeTarget ? game.observeTarget.ident : 0));
+    if (this._w.ringOff !== off) { this._w.ringOff = off; this.el.observeFg.style.strokeDashoffset = off; }
     this.el.observeRing.classList.toggle('on', !!game.observeTarget && game.observeTarget.ident < 1);
 
-    // 提示
-    const it = p.findInteraction();
+    /* 交互提示：findInteraction 会遍历全部演员并构造对象/模板串，
+       不必每帧算一次 —— 每 4 帧刷新一次，手感上察觉不到。
+       注意 doInteract() 仍会在按键时实时调用一次，保证动作与提示一致。 */
+    if ((this._intTick++ & 3) === 0) this._intCache = p.findInteraction();
+    const it = this._intCache;
     if (it) {
-      this.el.prompt.classList.remove('hidden');
-      this.el.promptText.textContent = it.label;
-    } else this.el.prompt.classList.add('hidden');
+      this._cls('prompt', this.el.prompt, 'hidden', false);
+      this._text('promptText', this.el.promptText, it.label);
+    } else {
+      this._cls('prompt', this.el.prompt, 'hidden', true);
+    }
 
     // 字幕 / 日志计时
     if (this.subTimer > 0) {
@@ -228,6 +275,11 @@ export class HUD {
 
   setCursorMode(on) {
     if (!this.el.cursorHint) return;
+    /* 此前这个方法是每帧被调用的，却无条件重写 innerHTML ——
+       等于每帧做一次完整的 HTML 解析 + 子树替换，是单帧 DOM 变更的最大来源。
+       只在模式真正切换时更新。 */
+    if (this._w.cursorMode === on) return;
+    this._w.cursorMode = on;
     this.el.cursorHint.classList.toggle('on', on);
     this.el.cursorHint.innerHTML = on
       ? '鼠标已释放 — 可点击指令按钮（点击画面恢复视角）'
@@ -237,98 +289,124 @@ export class HUD {
   updateObjectives(game) {
     for (const li of this.el.objectives.children) {
       const st = game.objectiveState[li.dataset.id];
+      const k = 'obj:' + li.dataset.id;
+      if (this._w[k] === st) continue;      // 状态没变就整项跳过
+      this._w[k] = st;
       li.className = st === 'done' ? 'done' : st === 'failed' ? 'failed' : st === 'active' ? 'active' : '';
       li.querySelector('.box').textContent = st === 'done' ? '✓' : st === 'failed' ? '✕' : '';
     }
   }
 
   updateStatus(game) {
-    this.el.clock.textContent = game.clockString();
+    this._text('clock', this.el.clock, game.clockString());
     const a = game.alertLevel();
-    this.el.alert.textContent = a.text;
-    this.el.alert.className = a.cls;
-    const ided = game.actors.filter((x) => (x.kind === 'suspect') && x.identified).length;
-    const total = game.suspects.length;
-    this.el.idCount.textContent = `${ided} / ${total}`;
-    const safe = game.civilians.filter((c) => c.safe).length;
-    this.el.civCount.textContent = `${safe} / ${game.civilians.length}`;
+    this._text('alert', this.el.alert, a.text);
+    if (this._w.alertCls !== a.cls) { this._w.alertCls = a.cls; this.el.alert.className = a.cls; }
+    /* 计数循环取代 filter()：原先每帧两次数组分配 */
+    let ided = 0;
+    for (const x of game.actors) if (x.kind === 'suspect' && x.identified) ided++;
+    let safe = 0;
+    for (const c of game.civilians) if (c.safe) safe++;
+    this._text('idCount', this.el.idCount, ided + ' / ' + game.suspects.length);
+    this._text('civCount', this.el.civCount, safe + ' / ' + game.civilians.length);
   }
 
   updateSquad(game) {
     const order = ORDER_NAMES[game.squadOrder] || ORDER_NAMES.follow;
-    this.el.orderName.textContent = game.squadOrder === 'clear' && game.squadWaypoint
-      ? `${order.cn} · 前往航点` : order.cn;
+    this._text('orderName', this.el.orderName,
+      game.squadOrder === 'clear' && game.squadWaypoint ? `${order.cn} · 前往航点` : order.cn);
     for (const cmd of this.el.commandBar.children) {
       cmd.classList.toggle('active', cmd.dataset.cmd === game.squadOrder);
     }
-    const roster = [game.player, ...game.squad];
+    /* 复用同一个数组，避免每帧 [player, ...squad] 的展开分配 */
+    const roster = this._roster;
+    roster.length = 0;
+    roster.push(game.player);
+    for (const m of game.squad) roster.push(m);
     for (const a of roster) {
       const e = this.squadEls[a.id];
       if (!e) continue;
-      const pct = clamp(a.hp / a.maxHp, 0, 1) * 100;
-      e.hp.style.width = pct + '%';
-      e.root.classList.toggle('down', !a.alive);
-      e.root.classList.toggle('hurt', a.alive && pct < 60);
-      e.root.classList.toggle('acting', a === game.actingMember);
+      const pct = Math.round(clamp(a.hp / a.maxHp, 0, 1) * 100);
+      this._width('hp:' + a.id, e.hp, pct);
+      this._cls('sq:' + a.id, e.root, 'down', !a.alive);
+      this._cls('sq:' + a.id, e.root, 'hurt', a.alive && pct < 60);
+      this._cls('sq:' + a.id, e.root, 'acting', a === game.actingMember);
       let st = '待命';
       if (!a.alive) st = '失去行动能力';
       else if (a.blind > 0) st = '失能';
       else if (a.kind === 'player') st = a.stance === 'sprint' ? '疾行' : a.stance === 'sneak' ? '潜行' : '移动中';
       else if (a.vel > 0.4) st = '推进中';
       if (a.aimTarget) st = '交战中';
-      e.st.textContent = st;
+      this._text('sqst:' + a.id, e.st, st);
     }
   }
 
   updateWeapon(game) {
     const p = game.player;
     const d = p.def;
-    this.el.wpName.textContent = d.short;
-    this.el.wpMag.textContent = String(p.mag[p.active]);
-    this.el.wpReserve.textContent = String(p.reserve[p.active]);
-    this.el.wpAmmo.classList.toggle('low', p.mag[p.active] <= Math.max(2, d.mag * 0.25));
-    this.el.wpMode.textContent = d.mode;
+    this._text('wpName', this.el.wpName, d.short);
+    this._text('wpMag', this.el.wpMag, p.mag[p.active]);
+    this._text('wpReserve', this.el.wpReserve, p.reserve[p.active]);
+    this._cls('wpAmmo', this.el.wpAmmo, 'low', p.mag[p.active] <= Math.max(2, d.mag * 0.25));
+    this._text('wpMode', this.el.wpMode, d.mode);
     const g = p.gadgetDef;
-    this.el.wpGadget.textContent = `${g.short} ×${p.gadgetCount}`;
-    this.el.wpReload.classList.toggle('hidden', p.reloading <= 0);
-    this.el.wpReload.textContent = `换弹中… ${Math.max(0, (p.reloading / d.reload) * 100).toFixed(0)}%`;
+    this._text('wpGadget', this.el.wpGadget, `${g.short} ×${p.gadgetCount}`);
+    const loading = p.reloading > 0;
+    this._cls('wpReload', this.el.wpReload, 'hidden', !loading);
+    /* 只在可见时更新百分比文本（原先隐藏状态下也每帧写一次） */
+    if (loading) {
+      this._text('wpReloadTxt', this.el.wpReload,
+        `换弹中… ${Math.max(0, (p.reloading / d.reload) * 100).toFixed(0)}%`);
+    }
   }
 
   updateTarget(game) {
     const t = game.observeTarget;
     // 倒地的队友仍要显示状态（可急救），倒地的敌人/平民不再显示
     if (!t || (!t.alive && t.kind !== 'squad')) {
-      this.el.targetCard.classList.add('hidden');
+      this._cls('tc', this.el.targetCard, 'hidden', true);
       return;
     }
-    this.el.targetCard.classList.remove('hidden');
+    this._cls('tc', this.el.targetCard, 'hidden', false);
     const range = Math.round(Math.hypot(t.pos.x - game.player.pos.x, t.pos.z - game.player.pos.z));
-    this.el.tcRange.textContent = `${range} m`;
-    this.el.tcIdent.style.width = (t.ident * 100).toFixed(0) + '%';
-    this.el.targetCard.className = '';
+    this._text('tcRange', this.el.tcRange, range + ' m');
+    this._width('tcIdent', this.el.tcIdent, (t.ident * 100).toFixed(0));
+
+    /* 变体类：原先用 `className = ''` 清空再 add —— 即便结果完全一样，
+       每帧都会产生一次 class 属性变更。改为只增删差异项。 */
+    let variant = '';
+    let cls = '', note = '';
     if (t.ident >= 0.8) {
       if (t.kind === 'suspect') {
-        this.el.tcClass.textContent = t.surrendered ? '已投降嫌疑人' : '武装嫌疑人';
-        this.el.targetCard.classList.add('armed');
-        this.el.tcNote.textContent = t.surrendered ? '可上前拘押（E）' : (t.name || '');
+        variant = 'armed';
+        cls = t.surrendered ? '已投降嫌疑人' : '武装嫌疑人';
+        note = t.surrendered ? '可上前拘押（E）' : (t.name || '');
       } else if (t.kind === 'civilian') {
-        this.el.tcClass.textContent = '平民 · 非战斗人员';
-        this.el.targetCard.classList.add('civilian');
-        this.el.tcNote.textContent = '误伤将导致任务失败 · E 护送撤离';
+        variant = 'civilian';
+        cls = '平民 · 非战斗人员';
+        note = '误伤将导致任务失败 · E 护送撤离';
       } else {
-        this.el.tcClass.textContent = t.callsign || '警备人员';
-        this.el.targetCard.classList.add('friendly');
-        this.el.tcNote.textContent = t.alive
+        variant = 'friendly';
+        cls = t.callsign || '警备人员';
+        note = t.alive
           ? `友军 · ${t.tag || '警备人员'}（不会受到你的伤害）`
           : '失去行动能力 · 需要急救（E）';
       }
     } else if (t.ident >= 0.35) {
-      this.el.tcClass.textContent = '人员接触 · 身份不明';
-      this.el.tcNote.textContent = '持续观察以确认目标 · HOLD TO IDENTIFY';
+      cls = '人员接触 · 身份不明';
+      note = '持续观察以确认目标 · HOLD TO IDENTIFY';
     } else {
-      this.el.tcClass.textContent = 'UNKNOWN CONTACT';
-      this.el.tcNote.textContent = '疑似活动 · 需要观察';
+      cls = 'UNKNOWN CONTACT';
+      note = '疑似活动 · 需要观察';
     }
+    if (this._w.tcVariant !== variant) {
+      this._w.tcVariant = variant;
+      const el = this.el.targetCard;
+      el.classList.remove('armed', 'civilian', 'friendly');
+      if (variant) el.classList.add(variant);
+    }
+    this._text('tcClass', this.el.tcClass, cls);
+    this._text('tcNote', this.el.tcNote, note);
   }
 
   updateCompass(game) {
@@ -575,7 +653,7 @@ export class HUD {
   flash(alpha = 0.85) {
     /* 4. 纯 CSS 合成层：只改 opacity（transform/opacity 由合成器处理），
        不写 background、不读像素、不动 #grade 的渐变+滤镜。 */
-    const w = document.getElementById('whiteout');
+    const w = this.el.whiteout;
     if (!w) return;
     w.style.transition = 'none';
     w.style.opacity = String(Math.min(1, Math.max(0, alpha)));

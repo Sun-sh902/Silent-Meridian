@@ -102,6 +102,7 @@ export class Grid {
 }
 
 /** 视线：从 A 到 B 是否被遮挡（步进采样 + 空间网格） */
+const _scratchLos = [];
 export function losBlocked(grid, ax, ay, az, bx, by, bz, ignoreTag) {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
   const len = Math.sqrt(dx * dx + dz * dz);
@@ -109,7 +110,9 @@ export function losBlocked(grid, ax, ay, az, bx, by, bz, ignoreTag) {
   const steps = Math.min(140, Math.max(2, Math.ceil(len / 0.7)));
   const ix = dx / steps, iy = dy / steps, iz = dz / steps;
   let x = ax, y = ay, z = az;
-  const scratch = [];
+  /* 复用模块级缓冲：本函数每次调用都会走一遍，原先每次都新建一个数组。
+     这是零 GC 的小改动，但它在感知循环里每帧被调用几十次。 */
+  const scratch = _scratchLos;
   for (let s = 1; s < steps; s++) {
     x += ix; y += iy; z += iz;
     grid.queryPoint(x, z, scratch);
@@ -139,31 +142,34 @@ Grid.prototype.queryPoint = function (x, z, out) {
 
 /** 圆形角色移动：分轴推进 + 推出 */
 const _scratchA = [];
+/* 单轴解算抽成模块级函数：原先写成 moveCircle 内部的闭包，
+   每帧每个角色调用一次 = 每帧新建 18~20 个闭包。 */
+function _resolveAxis(grid, pos, radius, axis, delta, feetY, top, canStep) {
+  if (delta === 0) return;
+  pos[axis] += delta;
+  const list = grid.queryCircle(pos.x, pos.z, radius + 0.001, _scratchA);
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    if (b.noCollide) continue;
+    if (b.max.y <= feetY + canStep) continue;      // 可跨过的矮物
+    if (b.min.y >= top - 0.02) continue;           // 头顶上方
+    if (pos.x + radius <= b.min.x || pos.x - radius >= b.max.x) continue;
+    if (pos.z + radius <= b.min.z || pos.z - radius >= b.max.z) continue;
+    if (axis === 'x') pos.x = delta > 0 ? b.min.x - radius : b.max.x + radius;
+    else pos.z = delta > 0 ? b.min.z - radius : b.max.z + radius;
+  }
+}
 export function moveCircle(grid, pos, radius, dx, dz, feetY, height, canStep = 0.34) {
   const top = feetY + height;
-  const resolveAxis = (axis, delta) => {
-    if (delta === 0) return;
-    pos[axis] += delta;
-    const list = grid.queryCircle(pos.x, pos.z, radius + 0.001, _scratchA);
-    for (let i = 0; i < list.length; i++) {
-      const b = list[i];
-      if (b.noCollide) continue;
-      if (b.max.y <= feetY + canStep) continue;      // 可跨过的矮物
-      if (b.min.y >= top - 0.02) continue;           // 头顶上方
-      if (pos.x + radius <= b.min.x || pos.x - radius >= b.max.x) continue;
-      if (pos.z + radius <= b.min.z || pos.z - radius >= b.max.z) continue;
-      if (axis === 'x') pos.x = delta > 0 ? b.min.x - radius : b.max.x + radius;
-      else pos.z = delta > 0 ? b.min.z - radius : b.max.z + radius;
-    }
-  };
-  resolveAxis('x', dx);
-  resolveAxis('z', dz);
+  _resolveAxis(grid, pos, radius, 'x', dx, feetY, top, canStep);
+  _resolveAxis(grid, pos, radius, 'z', dz, feetY, top, canStep);
   return pos;
 }
 
 /** 判断某点是否落在任何盒子内（用于出生点检测） */
+const _scratchFree = [];
 export function pointFree(grid, x, z, radius, feetY, height) {
-  const list = grid.queryCircle(x, z, radius, []);
+  const list = grid.queryCircle(x, z, radius, _scratchFree);
   const top = feetY + height;
   for (let i = 0; i < list.length; i++) {
     const b = list[i];
