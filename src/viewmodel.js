@@ -14,6 +14,10 @@ const MAT = {
   glow:  new THREE.MeshStandardMaterial({ color: 0xcaf7ff, emissive: 0x5fd0e6, emissiveIntensity: 1.1 }),
 };
 
+/* update() 里复用的临时量：避免逐帧分配 */
+const _vmHip = new THREE.Vector3();
+const _vmAds = new THREE.Vector3();
+
 function box(w, h, d, mat, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
@@ -21,6 +25,22 @@ function box(w, h, d, mat, x = 0, y = 0, z = 0) {
 }
 
 export class ViewModel {
+  /* 释放私有场景里的几何体。
+     这些 BoxGeometry 在原实现（viewmodel.js 的 box()）里是每次部署重建的，
+     而 ViewModel 挂在私有 scene 上、不在主场景图内，
+     所以主场景的 traverse 扫不到它们 —— 每次重新部署净增约 70 个 buffer。 */
+  dispose() {
+    if (!this.scene) return;
+    this.scene.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+    });
+    this.scene.clear();
+    this.models = {};
+    this.current = null;
+    this.root = null;
+    this.scene = null;
+  }
+
   constructor(game, camera) {
     this.game = game;
     this.mainCamera = camera;
@@ -37,6 +57,8 @@ export class ViewModel {
     this.recoilPitch = 0;
     this.reloadT = 0;
     this.lag = { x: 0, y: 0 };
+    this._vmPos = new THREE.Vector3();
+    this._vmRot = new THREE.Euler();
     this.lastYaw = 0; this.lastPitch = 0;
 
     // 专用光照，保证第一人称武器始终可读
@@ -146,27 +168,30 @@ export class ViewModel {
     const bobX = Math.sin(player.bob) * feel.viewmodel.bobAmpX * player.moving * (1 - ads * feel.viewmodel.bobAdsDamp);
     const bobY = Math.abs(Math.cos(player.bob)) * feel.viewmodel.bobAmpY * player.moving * (1 - ads * feel.viewmodel.bobAdsDamp);
 
-    // 位置以「光学瞄具位于视线轴上」为准
-    const hipPos = this.isPistol
-      ? new THREE.Vector3(0.215, -0.165, -0.44)
-      : new THREE.Vector3(0.245, -0.195, -0.55);
-    const adsPos = this.isPistol
-      ? new THREE.Vector3(0.0, -0.050, -0.42)
-      : new THREE.Vector3(0.0, -0.053, -0.44);
-    const pos = hipPos.lerp(adsPos, ads);
+    /* 位置以「光学瞄具位于视线轴上」为准。
+       这里的 Vector3/Euler 全部改为实例字段上的原地赋值：
+       原实现每帧新建 3 个 Vector3 + 2 个 Euler（约 300 个对象/秒）。
+       数值与原来完全一致，只是不再分配。 */
+    const hip = _vmHip, adsP = _vmAds, pos = this._vmPos, rot = this._vmRot;
+    if (this.isPistol) {
+      hip.set(0.215, -0.165, -0.44); adsP.set(0.0, -0.050, -0.42);
+    } else {
+      hip.set(0.245, -0.195, -0.55); adsP.set(0.0, -0.053, -0.44);
+    }
+    pos.copy(hip).lerp(adsP, ads);
     pos.x += this.lag.x + bobX;
     pos.y += this.lag.y + bobY - this.reloadT * 0.16;
     pos.z += this.recoilZ;
 
-    const hipRot = new THREE.Euler(0.02, this.isPistol ? -0.10 : -0.06, this.isPistol ? 0.02 : 0.035);
-    const adsRot = new THREE.Euler(0, 0, 0);
-    this.root.position.copy(pos);
-    this.root.rotation.set(
-      hipRot.x + (adsRot.x - hipRot.x) * ads + this.recoilPitch + this.reloadT * 0.5,
-      hipRot.y + (adsRot.y - hipRot.y) * ads,
-      hipRot.z + (adsRot.z - hipRot.z) * ads + this.reloadT * 0.25 + this.lag.x * 0.6,
+    /* 原实现里 adsRot 恒为 (0,0,0)，展开后即 hip 分量乘以 (1-ads) */
+    const hx = 0.02, hy = this.isPistol ? -0.10 : -0.06, hz = this.isPistol ? 0.02 : 0.035;
+    rot.set(
+      hx * (1 - ads) + this.recoilPitch + this.reloadT * 0.5,
+      hy * (1 - ads),
+      hz * (1 - ads) + this.reloadT * 0.25 + this.lag.x * 0.6,
     );
-    if (this.isPistol && ads > 0.9) this.root.position.x += 0.0;
+    this.root.position.copy(pos);
+    this.root.rotation.copy(rot);
     // 冲刺时压枪
     if (player.stance === 'sprint') {
       this.root.position.y -= feel.viewmodel.sprintDrop;

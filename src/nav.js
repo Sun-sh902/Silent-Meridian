@@ -4,6 +4,9 @@
 import { pointFree, losBlocked } from './geom.js';
 
 export class NavGrid {
+  /* 8 邻域方向表：静态常量，避免每次 findPath 重建数组 */
+  static DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
   constructor(grid, bounds, cell = 1.5, inflate = 0.62) {
     this.grid = grid;
     this.bounds = bounds;
@@ -19,7 +22,12 @@ export class NavGrid {
         this.blocked[j * this.w + i] = pointFree(grid, x, z, inflate, 0, 1.75) ? 0 : 1;
       }
     }
-    this._open = [];
+    /* open list 改用二叉堆：原先每次取最小 f 都要线性扫描整个 open 数组，
+       最坏 O(n) 次比较 × n 次弹出。节点规模不大时线性扫描勉强可用，
+       但掩体/追击路径会频繁重算，这里换成 O(log n) 的堆。
+       堆按索引存节点，键直接读 _f 表，因此不需要额外的键数组。 */
+    this._heap = new Int32Array(this.w * this.h * 2 + 64);
+    this._heapN = 0;
     this._came = new Int32Array(this.w * this.h);
     this._g = new Float32Array(this.w * this.h);
     this._f = new Float32Array(this.w * this.h);
@@ -28,6 +36,37 @@ export class NavGrid {
     this._epoch = 0;
   }
   idx(i, j) { return j * this.w + i; }
+
+  /* ---- 二叉最小堆（键 = this._f[idx]） ---- */
+  _heapPush(idx) {
+    const h = this._heap, f = this._f;
+    if (this._heapN >= h.length) return;      // 堆满则丢弃（有 maxNodes 兜底）
+    let i = this._heapN++;
+    h[i] = idx;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (f[h[p]] <= f[h[i]]) break;
+      const t = h[p]; h[p] = h[i]; h[i] = t;
+      i = p;
+    }
+  }
+  _heapPop() {
+    const h = this._heap, f = this._f;
+    const top = h[0];
+    const n = --this._heapN;
+    h[0] = h[n];
+    let i = 0;
+    for (;;) {
+      const l = i * 2 + 1, r = l + 1;
+      let m = i;
+      if (l < n && f[h[l]] < f[h[m]]) m = l;
+      if (r < n && f[h[r]] < f[h[m]]) m = r;
+      if (m === i) break;
+      const t = h[m]; h[m] = h[i]; h[i] = t;
+      i = m;
+    }
+    return top;
+  }
   cellOf(x, z) {
     return {
       i: Math.min(this.w - 1, Math.max(0, Math.round(x / this.cell) - this.cx0)),
@@ -61,27 +100,23 @@ export class NavGrid {
     const si = this.idx(s.i, s.j), ti = this.idx(t.i, t.j);
     if (si === ti) return [{ x: bx, z: bz }];
     const ep = ++this._epoch;
-    const open = this._open;
-    open.length = 0;
+    this._heapN = 0;
     const g = this._g, f = this._f, came = this._came, closed = this._closed, stamp = this._stamp;
     stamp[si] = ep; g[si] = 0;
     f[si] = Math.hypot(t.i - s.i, t.j - s.j);
-    open.push(si);
+    this._heapPush(si);
     let found = false, visited = 0;
-    const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-    while (open.length) {
-      // 取 f 最小（线性扫描足够，节点规模小）
-      let best = 0;
-      for (let i = 1; i < open.length; i++) if (f[open[i]] < f[open[best]]) best = i;
-      const cur = open[best];
-      open[best] = open[open.length - 1]; open.pop();
+    /* 方向表提到循环外，避免每次搜索重建（原先每次 findPath 都新建一个数组） */
+    const DIRS = NavGrid.DIRS;
+    while (this._heapN > 0) {
+      const cur = this._heapPop();
       if (cur === ti) { found = true; break; }
-      if (stamp[cur] !== ep) continue;
-      if (closed[cur] === ep) continue;
+      if (closed[cur] === ep) continue;      // 堆里可能存在重复项，弹出时判重
       closed[cur] = ep;
       if (++visited > maxNodes) break;
       const ci = cur % this.w, cj = (cur / this.w) | 0;
-      for (const [di, dj] of DIRS) {
+      for (let k = 0; k < 8; k++) {
+        const di = DIRS[k][0], dj = DIRS[k][1];
         const ni = ci + di, nj = cj + dj;
         if (this.isBlocked(ni, nj)) continue;
         if (di && dj && (this.isBlocked(ci + di, cj) || this.isBlocked(ci, cj + dj))) continue;
@@ -94,8 +129,7 @@ export class NavGrid {
           g[nIdx] = ng;
           f[nIdx] = ng + Math.hypot(t.i - ni, t.j - nj);
           came[nIdx] = cur;
-          open.push(nIdx);
-          if (open.length > 4200) break;
+          this._heapPush(nIdx);
         }
       }
     }

@@ -6,6 +6,9 @@ import { clamp, angleDamp, shortAngle, moveCircle, dist2D, makeRng, TAU } from '
 import { castRay, sameTeam } from './combat.js';
 import { feel } from './feel.js';
 
+/* 群体分离用的复用坐标缓冲（见 Actor.moveDir） */
+const _sepPos = { x: 0, z: 0 };
+
 const rng = makeRng(4242);
 
 /* ============================================================
@@ -301,14 +304,18 @@ export class Actor {
       p.head.rotation.z = Math.sin(this.phase * 4) * 0.25;
       p.head.rotation.x = 0.3;
     } else if (p.head) {
-      p.head.rotation.x *= 0.95;
-      p.head.rotation.z *= 0.95;
+      /* dt 归一化回正：原来的「每帧 *0.95」在 144Hz 下回正速度快 2.4 倍，
+         受击甩头/致盲低头的恢复速度会随刷新率变化。 */
+      const k = Math.exp(-dt * 3.08);   // 等效 60fps 下的 0.95
+      p.head.rotation.x *= k;
+      p.head.rotation.z *= k;
     }
   }
 
   syncTransform() {
-    this.group.position.set(this.pos.x, this.y, this.pos.z);
-    this.group.rotation.y = this.yaw;
+    const g = this.group;
+    g.position.set(this.pos.x, this.y, this.pos.z);
+    g.rotation.y = this.yaw;
     if (this.marker) {
       if (this.kind === 'squad') {
         this.marker.visible = this.alive;
@@ -333,12 +340,16 @@ export class Actor {
   moveDir(fx, fz, speed, dt) {
     const len = Math.hypot(fx, fz) || 1;
     const m = speed * dt;
-    const before = this.pos.x + this.pos.z;
+    /* 用位移向量的模长算速度。
+       这里曾经写的是 Math.abs(this.pos.x + this.pos.z - before) —— 坐标「和」的变化量，
+       对 dx = -dz 的斜向移动恒等于 0（yaw=0 时按 W+D 全速前进，vel 却读数为 0），
+       导致走路动画冻结、移动扩散惩罚失效、警觉与识别加成不触发。 */
+    const x0 = this.pos.x, z0 = this.pos.z;
     moveCircle(this.game.world.grid, this.pos, this.radius, (fx / len) * m, (fz / len) * m,
       this.y, this.height);
-    const moved = Math.abs(this.pos.x + this.pos.z - before);
-    this.vel = moved / Math.max(dt, 1e-4);
-    // 分离
+    this.vel = Math.hypot(this.pos.x - x0, this.pos.z - z0) / Math.max(dt, 1e-4);
+    // 分离（复用同一个坐标缓冲，避免每次推挤都新建对象）
+    const q = _sepPos;
     for (const o of this.game.actors) {
       if (o === this || !o.alive) continue;
       const d = dist2D(this.pos.x, this.pos.z, o.pos.x, o.pos.z);
@@ -346,7 +357,7 @@ export class Actor {
       if (d < min && d > 1e-4) {
         const push = (min - d) * 0.5;
         const nx = (this.pos.x - o.pos.x) / d, nz = (this.pos.z - o.pos.z) / d;
-        const q = { x: this.pos.x, z: this.pos.z };
+        q.x = this.pos.x; q.z = this.pos.z;
         moveCircle(this.game.world.grid, q, this.radius, nx * push, nz * push, this.y, this.height);
         this.pos.x = q.x; this.pos.z = q.z;
       }
@@ -653,7 +664,18 @@ export class SquadMember extends Actor {
     if (this.reportCd > 0) return;
     if (this.kind !== 'squad') return;
     const g = this.game;
-    if (!target.seen) return;
+    if (!target.seen) {
+      /* 小队先于玩家发现接触：标记为「已知但未识别」并呼叫。
+         此前这里直接 `return`，导致下面那一支永远不可达 ——
+         小队永远不可能先敌发现，LINES.squadSpotUnknown 成了死数据。
+         注意 seen 只影响「未识别接触（?）」标记是否出现（README 的核心机制之一），
+         识别（identified / ident）仍然要由玩家或共享识别流程推进。 */
+      target.seen = true;
+      g.squadReport('squadSpotUnknown', this, target);
+      g.addMapEvent(target.pos.x, target.pos.z, '小队报告：有动静', 'sighting');
+      this.reportCd = 2.5;
+      return;
+    }
     if (target.ident >= 0.8 && !target.identified) {
       target.identified = true;
       if (target.kind === 'suspect') {
@@ -662,9 +684,6 @@ export class SquadMember extends Actor {
         g.squadReport('squadIdCiv', this, target);
       }
       this.reportCd = 3.5;
-    } else if (!target.seen) {
-      target.seen = true;
-      this.reportCd = 2.5;
     }
   }
 }
@@ -689,8 +708,9 @@ export class Suspect extends Actor {
     this.elite = !!cfg.elite;
     this.weaponDamage = cfg.elite ? 17 : 14;
     this.fireCd = 1 + Math.random() * 1.5;
-    this.burstLeft = 0;
-    this.burstGap = 0;
+    /* 首个点射就是完整的 3~5 发；burstGap 必须为正，否则第一轮点射后会立刻续射 */
+    this.burstLeft = 3 + Math.floor(Math.random() * 3);
+    this.burstGap = 0.55 + Math.random() * 0.5;
     this.coverPos = null;
     this.scanPhase = Math.random() * TAU;
     this.lookTimer = 0;
@@ -835,10 +855,14 @@ export class Suspect extends Actor {
     const d = dist2D(this.pos.x, this.pos.z, this.target.pos.x, this.target.pos.z);
     const visible = this.canSee(this.target, 60, undefined);
 
-    // 找掩体
+    /* 找掩体：由 coverTimer 统一节流。
+       原来的条件写成 `(!this.coverPos || this.coverTimer <= 0)` —— 只要 coverPos 为空，
+       前半段就恒为真，于是「找不到掩体」或「掩体被判定不可达而清空」时，
+       会变成每帧（50% 概率）调用一次 findCoverFor + setPath。
+       改成只看 coverTimer，并让它在每次搜索后（无论成功与否）都重置。 */
     if (this.coverTimer === undefined) this.coverTimer = 0;
     this.coverTimer -= dt;
-    if (visible && (!this.coverPos || this.coverTimer <= 0) && Math.random() < 0.5) {
+    if (visible && this.coverTimer <= 0 && Math.random() < 0.5) {
       this.coverTimer = 2.6 + Math.random() * 2.2;
       const c = g.findCoverFor(this, this.target, d);
       if (c) this.coverPos = c;
@@ -846,46 +870,75 @@ export class Suspect extends Actor {
     if (this.coverPos) {
       const cd = dist2D(this.pos.x, this.pos.z, this.coverPos.x, this.coverPos.z);
       if (cd > 0.8) {
-        if (!this.path || this.pathAge <= 0) { this.setPath(this.coverPos.x, this.coverPos.z); this.pathAge = 2.0; }
+        if (!this.path || this.pathAge <= 0) {
+          /* setPath 返回 null 说明这个掩体不在导航网格上（或不可达）。
+             此时 this.path 恒为 null，若不做处理就会每帧触发一次全量 A*
+             （最多 5200 节点、open list 线性扫描），并且原先的 return 会跳过
+             下面的瞄准与开火段 —— 嫌疑人卡死在原地、再也不开枪。
+             这里的做法是直接放弃这个掩体并加冷却，让 AI 回落到常规分支。 */
+          if (!this.setPath(this.coverPos.x, this.coverPos.z)) {
+            this.coverPos = null;
+            this.coverTimer = 1.5;      // 冷却：不要因为「掩体被清空」就立刻重新搜一遍
+            this.pathAge = 0;
+          } else {
+            this.pathAge = 2.0;
+          }
+        }
         this.pathAge -= dt;
-        this.followPath(dt, this.speed * 1.25);
-        return;
+        /* 不再 return：即便在向掩体移动，也要继续执行瞄准与开火 */
+        if (this.coverPos) {
+          this.followPath(dt, this.speed * 1.25);
+          this.targetYaw = Math.atan2(-(this.target.pos.x - this.pos.x), -(this.target.pos.z - this.pos.z));
+          this.updateEngageFire(dt, visible);
+          return;
+        }
+      } else {
+        this.vel = 0;
+        this.crouch = true;
       }
-      this.vel = 0;
-      this.crouch = true;
     } else if (!visible && d > 14) {
       // 逼近
       if (!this.path || this.pathAge <= 0) { this.setPath(this.target.pos.x, this.target.pos.z); this.pathAge = 1.8; }
       this.pathAge -= dt;
       this.followPath(dt, this.speed * 1.1);
     } else {
+      /* 已进入交火距离且无掩体可用：站定射击。
+         注意：这里原本写了 this.strafe 的赋值，但全项目没有任何地方读它 ——
+         属于自欺欺人的死代码（读者会以为敌人在侧移，其实站着不动）。
+         真要加侧移，就用 moveDir 沿目标垂线移动；在那之前不保留假实现。 */
       this.vel = 0;
-      // 侧移
-      this.strafe = this.strafe || (Math.random() < 0.5 ? -1 : 1);
-      if (Math.random() < 0.01) this.strafe *= -1;
     }
 
     this.targetYaw = Math.atan2(-(this.target.pos.x - this.pos.x), -(this.target.pos.z - this.pos.z));
 
-    // 开火
-    if (this.fireCd <= 0) {
-      const aimAt = this.seenTarget || (visible ? this.target : null);
-      if (aimAt && visible && this.awareness >= 1) {
-        const spread = (this.elite ? 0.030 : 0.048) + d * 0.0022 + this.suppression * 0.03;
-        this.shootAt(aimAt, spread, 4, 0xffb27a);
-        this.burstLeft = 3 + Math.floor(Math.random() * 3);
-        this.fireCd = 0.11;
-        this.burstGap = 1;
-      } else {
-        this.fireCd = 0.4 + Math.random() * 0.4;
-      }
-    } else if (this.burstLeft > 0 && this.seenTarget && visible && this.awareness >= 1 && this.fireCd <= 0.02) {
-      this.burstLeft--;
-      const d2 = dist2D(this.pos.x, this.pos.z, this.seenTarget.pos.x, this.seenTarget.pos.z);
-      this.shootAt(this.seenTarget, 0.045 + d2 * 0.0022 + this.suppression * 0.03, 1, 0xffb27a);
-      this.fireCd = 0.11;
+    this.updateEngageFire(dt, visible);
+  }
+
+  /* 交火开火：3~5 连发点射，发间 0.11s，点射之间用 burstGap 停顿。
+     旧实现把 `fireCd <= 0` 放在最前面判，于是续点射需要 `0 < fireCd <= 0.02`
+     这个极窄窗口，实际退化成节拍器式单发（~545rpm）+ 偶发杂散点射；
+     burstGap 被赋值却从未被读取。 */
+  updateEngageFire(dt, visible) {
+    if (this.fireCd > 0) return;
+    const aimAt = this.seenTarget;
+    const canShoot = !!aimAt && aimAt.alive && this.awareness >= 1 &&
+      this.canSee(aimAt, 60, undefined);
+    if (!canShoot) {
+      this.burstLeft = 0;
+      this.fireCd = 0.4 + Math.random() * 0.4;
+      return;
     }
-    if (this.fireCd <= 0.02 && this.burstLeft > 0) this.burstLeft = 0;
+    const d2 = dist2D(this.pos.x, this.pos.z, aimAt.pos.x, aimAt.pos.z);
+    const spread = (this.elite ? 0.030 : 0.048) + d2 * 0.0022 + this.suppression * 0.03;
+    this.shootAt(aimAt, spread, 1, 0xffb27a);
+    this.burstLeft--;
+    if (this.burstLeft > 0) {
+      this.fireCd = 0.11;                              // 点射内间隔
+    } else {
+      this.burstLeft = 3 + Math.floor(Math.random() * 3);   // 下一轮 3~5 发
+      this.fireCd = this.burstGap;                     // 点射之间的停顿
+      this.burstGap = 0.55 + Math.random() * 0.5;
+    }
   }
 
   surrender() {

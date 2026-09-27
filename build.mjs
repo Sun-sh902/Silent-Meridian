@@ -4,8 +4,10 @@
    ============================================================ */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { hashInputs } from './tools/build-info.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dist = join(root, 'dist');
@@ -23,14 +25,45 @@ if (!cssV || !jsV || cssV !== jsV) {
   process.exit(1);
 }
 console.log(`· 版本 v${jsV} · 打包经典脚本（file:// 可加载）…`);
+/* three 有两份拷贝：dev 走 index.html 的 importmap → vendor/three.module.js，
+   而 esbuild 默认按 node_modules 解析裸标识符 'three'。
+   两者今天字节相同，但 package.json 里是 ^0.180.0 —— 一次 npm update 就会让
+   单文件构建与开发模式静默分叉。这里用 alias 强制两边都只用 vendor 那一份，
+   使其成为唯一运行时。 */
+const vendorThree = join(root, 'vendor', 'three.module.js');
+const vendorCore = join(root, 'vendor', 'three.core.js');
+if (!existsSync(vendorThree) || !existsSync(vendorCore)) {
+  console.error('✗ 缺少 vendor/three.module.js 或 vendor/three.core.js（three 运行时需要两者）。');
+  process.exit(1);
+}
 execFileSync(esbuild, [
   join(root, 'src', 'main.js'),
   '--bundle',
   '--format=iife',
   '--target=es2020',
   '--minify',
+  `--alias:three=${vendorThree}`,
   `--outfile=${bundlePath}`,
 ], { stdio: 'inherit' });
+
+// ---- 给产物打上「版本 + 内容哈希」标记 ----
+// 背景：dist/ 不进版本库，且 index.html 的 ?v= 只在 V 变化时才更新。
+// 改完 src/ 忘记重新构建时，file:// 路径会继续跑旧包且毫无提示
+// （曾发生：P0-4 已修但 dist 里没有，双击运行的玩家仍然中招）。
+// 这里把标记写进包本身，配合 tools/check-dist.mjs 的陈旧检测使用。
+const rawBundle = readFileSync(bundlePath, 'utf8');
+const buildHash = createHash('sha256').update(rawBundle).digest('hex').slice(0, 12);
+const buildAt = new Date().toISOString();
+const stamp = `/* SM-BUILD v${jsV} ${buildHash} ${buildAt} */\n` +
+  `window.__SM_BUILD={v:"${jsV}",hash:"${buildHash}",at:"${buildAt}"};\n`;
+writeFileSync(bundlePath, stamp + rawBundle, 'utf8');
+console.log(`· 构建标记：v${jsV} · ${buildHash}`);
+
+// ---- 记录本次构建的输入指纹，供 tools/check-dist.mjs 判定陈旧 ----
+const inputs = hashInputs(root);
+writeFileSync(join(dist, 'build-stamp.json'), JSON.stringify({
+  v: jsV, hash: buildHash, at: buildAt, inputs,
+}, null, 2) + '\n', 'utf8');
 
 console.log('· 内联 HTML …');
 let html = srcHtml;

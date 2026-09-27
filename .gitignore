@@ -1,3 +1,7 @@
 node_modules/
-dist/
+
+# 人工跑测试/截图时产生的临时图（README 用的图在 docs/shots/，那个要提交）
 screenshots/
+
+# macOS
+.DS_Store

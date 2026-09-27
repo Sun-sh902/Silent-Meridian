@@ -17,7 +17,7 @@
   --line-strong:rgba(160,205,225,.42);
   --txt:#c8dde6;
   --txt-dim:rgba(200,221,230,.55);
-  --txt-faint:rgba(200,221,230,.32);
+  --txt-faint:rgba(200,221,230,.58);   /* 原为 .32：近黑底上约 2.3:1，不满足 WCAG AA */
   --accent:#54d6c6;
   --accent-dim:rgba(84,214,198,.18);
   --amber:#f2b64a;
@@ -48,7 +48,6 @@
   --hud-pad:calc(clamp(0.5rem,0.9vmin + 0.3rem,1.15rem) + env(safe-area-inset-top,0px));
   --hud-gap:clamp(0.3rem,0.7vmin + 0.15rem,0.8rem);
   --r:max(2px,0.125rem);
-  --panel-w:min(21rem,26vw);
 }
 
 /* 根字号随视口温和缩放（15–18px），配合上面的 max() 保底 */
@@ -90,18 +89,7 @@ body{
   transition:opacity .35s ease-out;
 }
 #damage-flash.hit{opacity:1;transition:opacity .04s linear}
-#rain-glass{
-  position:absolute;inset:0;pointer-events:none;opacity:.5;
-  background-image:
-    radial-gradient(1.4px 8px at 12% 24%, rgba(200,225,240,.30), transparent 70%),
-    radial-gradient(1.2px 7px at 68% 12%, rgba(200,225,240,.22), transparent 70%),
-    radial-gradient(1.6px 10px at 84% 46%, rgba(200,225,240,.24), transparent 70%),
-    radial-gradient(1.1px 6px at 32% 68%, rgba(200,225,240,.18), transparent 70%),
-    radial-gradient(1.3px 9px at 54% 86%, rgba(200,225,240,.20), transparent 70%);
-  background-size:340px 340px,420px 420px,380px 380px,300px 300px,460px 460px;
-  animation:rainDrift 9s linear infinite;
-}
-@keyframes rainDrift{from{background-position:0 0,0 0,0 0,0 0,0 0}to{background-position:0 340px,0 420px,0 380px,0 300px,0 460px}}
+
 
 /* ============================================================
    HUD —— 三行网格；所有面板参与布局，可重排
@@ -176,8 +164,11 @@ body{
 #compass-wrap{
   position:relative;display:flex;align-items:center;justify-content:center;
   justify-self:center;width:min(34vw,26rem);min-width:0;padding-top:var(--pad-1);
+  /* 投影放在静态容器上：此前 filter 直接挂在每帧重绘的 canvas 上，
+     等于每帧都要为整块画布做一次离屏 + 模糊。 */
+  filter:drop-shadow(0 2px 8px rgba(0,0,0,.6));
 }
-#compass{display:block;width:100%;height:auto;aspect-ratio:720/58;filter:drop-shadow(0 2px 8px rgba(0,0,0,.6))}
+#compass{display:block;width:100%;height:auto;aspect-ratio:720/58}
 #compass-readout{
   position:absolute;bottom:0;left:50%;transform:translateX(-50%);
   display:flex;flex-direction:column;align-items:center;line-height:1;
@@ -323,10 +314,14 @@ body{
 
 #command-bar{display:flex;flex-wrap:wrap;gap:var(--pad-1);margin-top:2px;pointer-events:auto}
 .cmd{
+  /* 由 <div> 改为 <button>：可聚焦、可被读屏识别为按钮。
+     下面的 font/color/text-align 是按钮默认样式的必要重置。 */
+  font:inherit;color:inherit;text-align:center;
   display:flex;flex-direction:column;align-items:center;gap:1px;
   padding:var(--pad-1) var(--pad-2);
   min-width:clamp(3.1rem,5.4vw,4.25rem);
   background:var(--panel);border:1px solid var(--line);
+  border-radius:0;
   transition:background .15s,border-color .15s,transform .1s;
   cursor:pointer;user-select:none;
 }
@@ -396,7 +391,7 @@ body{
 
 #hint-bar{
   font:500 var(--fs-1)/1.6 var(--mono);letter-spacing:.03em;
-  color:rgba(200,221,230,.34);text-align:center;max-width:100%;
+  color:var(--txt-faint);text-align:center;max-width:100%;
 }
 #hint-bar b{color:var(--accent);font-weight:600}
 
@@ -423,7 +418,6 @@ body{
 .tm-legend span{display:flex;align-items:center;gap:var(--pad-1)}
 .sw{width:0.55rem;height:0.55rem;display:inline-block;border-radius:1px;flex:0 0 auto}
 .sw.self{background:#4ea8ff;box-shadow:0 0 6px rgba(78,168,255,.75)}
-.sw.squad{background:#4ea8ff}
 .sw.suspect{background:#ff9a3c;border-radius:50%}
 .sw.event{background:#ffd447;border-radius:50%}
 .sw.civ{background:var(--civ)}
@@ -788,7 +782,6 @@ body{
    断点 3：≤1023 —— 平板：三列改两列，地图/无线电/提示条下线
    ============================================================ */
 @media (max-width:1023px){
-  :root{--panel-w:min(20rem,44vw)}
   #hud-top{grid-template-columns:auto minmax(0,1fr)}
   #compass-wrap{grid-column:1 / -1;order:3;width:min(70vw,24rem);justify-self:start}
   #hud-right{align-items:flex-end}
@@ -914,14 +907,41 @@ body{
   .panel-title .tag{display:none}
   .cmd i{display:none}
   .cmd{padding:2px var(--pad-1)}
-  #hud-gap{--hud-gap:4px}
+  #hud{--hud-gap:4px}   /* 原先写成 #hud-gap：匹配不到任何元素，该压缩档形同虚设 */
 }
 @media (max-height:440px){
   #status-panel{display:none}
 }
 
+/* 简报 / 操作说明等正文允许选中复制（body 全局 user-select:none 是为了
+   防止游戏内拖拽选中，不应波及静态文档区域） */
+.doc, .doc p, .doc li, .doc h1, .doc h2, .keys li, .kv li{
+  user-select:text;
+}
+
+/* ---------------- 键盘可达性 ----------------
+   整份样式表此前没有任何 :focus / :focus-visible 规则，
+   键盘用户看不出焦点在哪。这里统一给交互元素可见的焦点环。 */
+:focus{outline:none}
+:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+/* 深色底上 outline 有时不够醒目，给按钮再加一层内阴影提亮 */
+.cmd:focus-visible,.btn:focus-visible,.pick:focus-visible,.keys kbd:focus-visible{
+  box-shadow:0 0 0 3px rgba(84,214,198,.28);
+}
+
 /* 尊重系统「减少动态效果」 */
 @media (prefers-reduced-motion:reduce){
-  #rain-glass{animation:none}
   #hitmarker.show{animation:none;opacity:1}
+  /* 入场动画统一关掉：它们的 transform 会让元素在动画期间被判定为越界
+     （.log-item 的 logIn 从 translateX(14px) 起步），
+     既影响 reduced-motion 用户，也会让布局审计误报 —— 见 tools/responsive-test.mjs */
+  #observe-banner{animation:none}
+  .log-item{animation:none}
+  .rd{transition:none;opacity:1}
+  .wp-reload{animation:none}
+  #subtitle{transition:none}
+  #whiteout{transition:none}
 }

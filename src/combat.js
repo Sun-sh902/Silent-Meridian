@@ -17,29 +17,55 @@ export function sameTeam(a, b) {
   return !!a && !!b && teamOf(a) === teamOf(b);
 }
 
+/* 射线 vs AABB（标量版）。
+   此前用 4 个临时数组（o/d/lo/hi）做逐轴循环，每次调用分配 4 个数组；
+   本函数在每次射击、每颗弹丸、每个候选盒子上都会被调用，
+   一次霰弹枪射击（9 颗弹丸）就能产生上千次数组分配。这里全部改成局部标量。 */
 export function rayAABB(ox, oy, oz, dx, dy, dz, b) {
   let tmin = 0, tmax = Infinity;
-  const o = [ox, oy, oz], d = [dx, dy, dz];
-  const lo = [b.min.x, b.min.y, b.min.z], hi = [b.max.x, b.max.y, b.max.z];
-  for (let a = 0; a < 3; a++) {
-    if (Math.abs(d[a]) < 1e-7) {
-      if (o[a] < lo[a] || o[a] > hi[a]) return -1;
-    } else {
-      let t1 = (lo[a] - o[a]) / d[a], t2 = (hi[a] - o[a]) / d[a];
-      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
-      if (t1 > tmin) tmin = t1;
-      if (t2 < tmax) tmax = t2;
-      if (tmin > tmax) return -1;
-    }
+  let t1, t2, tmp;
+  // ---- X ----
+  if (Math.abs(dx) < 1e-7) { if (ox < b.min.x || ox > b.max.x) return -1; }
+  else {
+    t1 = (b.min.x - ox) / dx; t2 = (b.max.x - ox) / dx;
+    if (t1 > t2) { tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return -1;
+  }
+  // ---- Y ----
+  if (Math.abs(dy) < 1e-7) { if (oy < b.min.y || oy > b.max.y) return -1; }
+  else {
+    t1 = (b.min.y - oy) / dy; t2 = (b.max.y - oy) / dy;
+    if (t1 > t2) { tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return -1;
+  }
+  // ---- Z ----
+  if (Math.abs(dz) < 1e-7) { if (oz < b.min.z || oz > b.max.z) return -1; }
+  else {
+    t1 = (b.min.z - oz) / dz; t2 = (b.max.z - oz) / dz;
+    if (t1 > t2) { tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return -1;
   }
   return tmin;
 }
+
+/* 复用缓冲：castRay 每次调用都会用到，改成模块级单例，避免每次分配 */
+const _rayScratch = [];
+const _rayBox = {
+  min: { x: 0, y: 0, z: 0 },
+  max: { x: 0, y: 0, z: 0 },
+};
 
 /** 沿射线找最近的墙体与角色 */
 export function castRay(game, ox, oy, oz, dx, dy, dz, maxDist, shooter) {
   const grid = game.world.grid;
   let wallT = null, wallBox = null;
-  const scratch = [];
+  const scratch = _rayScratch;
   const step = 3.5;
   const n = Math.ceil(Math.min(maxDist, 150) / step);
   for (let s = 0; s <= n; s++) {
@@ -59,11 +85,11 @@ export function castRay(game, ox, oy, oz, dx, dy, dz, maxDist, shooter) {
   for (const a of game.actors) {
     if (a === shooter || !a.alive) continue;
     if (shooter && sameTeam(shooter, a)) continue;   // 友军伤害关闭：直接穿过
-    const cy = a.crouch ? 0.85 : 1.0;
-    const b = {
-      min: { x: a.pos.x - a.radius, y: a.y, z: a.pos.z - a.radius },
-      max: { x: a.pos.x + a.radius, y: a.y + (a.crouch ? 1.25 : 1.85), z: a.pos.z + a.radius },
-    };
+    const b = _rayBox;
+    const r = a.radius;
+    b.min.x = a.pos.x - r; b.max.x = a.pos.x + r;
+    b.min.z = a.pos.z - r; b.max.z = a.pos.z + r;
+    b.min.y = a.y; b.max.y = a.y + (a.crouch ? 1.25 : 1.85);
     if (!a.crouch) { b.min.y = a.y + 0.15; b.max.y = a.y + 1.9; }
     const t = rayAABB(ox, oy, oz, dx, dy, dz, b);
     if (t >= 0 && t <= maxDist) {
@@ -84,6 +110,10 @@ export function castRay(game, ox, oy, oz, dx, dy, dz, maxDist, shooter) {
   }
   return { dist: maxDist, point: { x: ox + dx * maxDist, y: oy + dy * maxDist, z: oz + dz * maxDist }, miss: true };
 }
+
+/* 复用缓冲：投掷物落地检测与闪光弹视线采样，避免每次新建数组 */
+const _projScratch = [];
+const _losScratch = [];
 
 /* ---------------- 特效管理器 ---------------- */
 export class Effects {
@@ -132,32 +162,77 @@ export class Effects {
     this.muzzleLight = new THREE.PointLight(0xffcf95, 0, 14, 2);
     scene.add(this.muzzleLight);
     this.muzzleTimer = 0;
+
+    /* ---- 对象池 ----
+       曳光弹与弹着火花原先每次开火/命中都新建 geometry+material+sprite，
+       一次霰弹枪射击（9 颗弹丸）会产生上千个 GPU 对象并立刻销毁。
+       下面按固定上限预分配并循环复用，运行期不再分配 GPU 资源。 */
+    this._tracerPool = [];
+    this._tracerFree = [];
+    this._sparkPool = [];
+    this._sparkFree = [];
+    /* 复用的矩阵/向量：impact() 原先每次调用新建 Matrix4+Quaternion+2×Vector3 */
+    this._m4 = new THREE.Matrix4();
+    this._q0 = new THREE.Quaternion();
+    this._v3 = new THREE.Vector3();
+    this._one = new THREE.Vector3(1, 1, 1);
+    const TRACER_MAX = 96, SPARK_MAX = 160;
+    for (let i = 0; i < TRACER_MAX; i++) {
+      /* 每条曳光弹必须有自己的 geometry（端点各不相同），
+         但都在构造期一次性分配；运行期只改写顶点，不再新建。 */
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xffe0a8, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const line = new THREE.Line(geo, mat);
+      line.frustumCulled = false;
+      line.visible = false;
+      scene.add(line);
+      this._tracerPool.push({ m: line, mat, pos: geo.attributes.position });
+      this._tracerFree.push(i);
+    }
+    for (let i = 0; i < SPARK_MAX; i++) {
+      /* 同理：每个火花需要独立材质，否则同色火花的 opacity 会互相覆盖 */
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.sparkTex, color: 0xffffff, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      sp.visible = false;
+      scene.add(sp);
+      this._sparkPool.push(sp);
+      this._sparkFree.push(i);
+    }
   }
 
   tracer(from, to, color = 0xffe0a8) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute([
-      from.x, from.y, from.z, to.x, to.y, to.z,
-    ], 3));
-    const m = new THREE.Line(g, new THREE.LineBasicMaterial({
-      color, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    m.frustumCulled = false;
-    this.scene.add(m);
-    this.tracers.push({ m, life: 0.055 });
+    // 池耗尽就丢弃这条曳光弹（纯视觉，寿命 55ms，不会造成信息缺失）
+    if (!this._tracerFree.length) return;
+    const idx = this._tracerFree.pop();
+    const t = this._tracerPool[idx];
+    t.pos.setXYZ(0, from.x, from.y, from.z);
+    t.pos.setXYZ(1, to.x, to.y, to.z);
+    t.pos.needsUpdate = true;
+    if (t.mat.color.getHex() !== color) t.mat.color.setHex(color);
+    t.mat.opacity = 0.85;
+    t.m.visible = true;
+    this.tracers.push({ i: idx, life: 0.055 });
   }
 
   impact(p, color = 0xffc98a, scale = 1) {
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: this.sparkTex, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    sp.position.set(p.x, p.y, p.z);
-    sp.scale.setScalar(0.5 * scale * feel.feedback.impactSparkScale);
-    this.scene.add(sp);
-    this.sparks.push({ m: sp, life: 0.20, max: 0.20 });
-    const d = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    d.compose(new THREE.Vector3(p.x, p.y - 0.02, p.z), q, new THREE.Vector3(1, 1, 1));
+    if (this._sparkFree.length) {
+      const idx = this._sparkFree.pop();
+      const sp = this._sparkPool[idx];
+      sp.material.color.setHex(color);
+      sp.material.opacity = 1;
+      sp.position.set(p.x, p.y, p.z);
+      sp.scale.setScalar(0.5 * scale * feel.feedback.impactSparkScale);
+      sp.visible = true;
+      this.sparks.push({ i: idx, life: 0.20, max: 0.20 });
+    }
+    const d = this._m4;
+    d.compose(this._v3.set(p.x, p.y - 0.02, p.z), this._q0, this._one);
     this.decalMesh.setMatrixAt(this.decalIdx, d);
     this.decalMesh.instanceMatrix.needsUpdate = true;
     this.decalIdx = (this.decalIdx + 1) % 140;
@@ -168,13 +243,15 @@ export class Effects {
     this.muzzleLight.color.setHex(color);
     this.muzzleLight.intensity = Math.max(this.muzzleLight.intensity, 22 * intensity);
     this.muzzleTimer = feel.feedback.muzzleFlashTime;
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: this.sparkTex, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
+    if (!this._sparkFree.length) return;
+    const idx = this._sparkFree.pop();
+    const sp = this._sparkPool[idx];
+    sp.material.color.setHex(color);
+    sp.material.opacity = 1;
     sp.position.set(p.x, p.y, p.z);
     sp.scale.setScalar(1.1 * intensity);
-    this.scene.add(sp);
-    this.sparks.push({ m: sp, life: 0.06, max: 0.06 });
+    sp.visible = true;
+    this.sparks.push({ i: idx, life: 0.06, max: 0.06 });
   }
 
   smokeCloud(x, y, z, radius, life = 16) {
@@ -200,16 +277,26 @@ export class Effects {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
       t.life -= dt;
-      t.m.material.opacity = Math.max(0, t.life / 0.055) * 0.85;
-      if (t.life <= 0) { this.scene.remove(t.m); t.m.geometry.dispose(); t.m.material.dispose(); this.tracers.splice(i, 1); }
+      const slot = this._tracerPool[t.i];
+      slot.mat.opacity = Math.max(0, t.life / 0.055) * 0.85;
+      if (t.life <= 0) {
+        slot.m.visible = false;              // 归还池中，不销毁、不重新分配
+        this._tracerFree.push(t.i);
+        this.tracers.splice(i, 1);
+      }
     }
     for (let i = this.sparks.length - 1; i >= 0; i--) {
       const s = this.sparks[i];
       s.life -= dt;
       const k = Math.max(0, s.life / s.max);
-      s.m.material.opacity = k;
-      s.m.scale.multiplyScalar(1 + dt * 5);
-      if (s.life <= 0) { this.scene.remove(s.m); s.m.material.dispose(); this.sparks.splice(i, 1); }
+      const sp = this._sparkPool[s.i];
+      sp.material.opacity = k;
+      sp.scale.multiplyScalar(1 + dt * 5);
+      if (s.life <= 0) {
+        sp.visible = false;
+        this._sparkFree.push(s.i);
+        this.sparks.splice(i, 1);
+      }
     }
     for (let i = this.smoke.length - 1; i >= 0; i--) {
       const c = this.smoke[i];
@@ -227,8 +314,10 @@ export class Effects {
     }
     if (this.muzzleTimer > 0) {
       this.muzzleTimer -= dt;
+      /* 用 dt 归一化衰减：原来的「每帧 *0.55」在 144Hz 下衰减速度是 60Hz 的 2.4 倍，
+         枪口闪光在不同刷新率下亮度/持续感不一致。 */
       if (this.muzzleTimer <= 0) this.muzzleLight.intensity = 0;
-      else this.muzzleLight.intensity *= 0.55;
+      else this.muzzleLight.intensity *= Math.exp(-dt * 35.8);   // 等效 60fps 下的 0.55
     }
   }
 
@@ -264,7 +353,7 @@ export function updateProjectiles(game, dt) {
       const nx = p.x + p.vx * dt, ny = p.y + p.vy * dt, nz = p.z + p.vz * dt;
       // 简易碰撞
       let hit = false;
-      const cands = grid.queryPoint(nx, nz, []);
+      const cands = grid.queryPoint(nx, nz, _projScratch);
       for (const b of cands) {
         if (b.noCollide || b.max.y < 0.6) continue;
         if (nx > b.min.x - 0.1 && nx < b.max.x + 0.1 && nz > b.min.z - 0.1 && nz < b.max.z + 0.1 && ny < b.max.y && ny > b.min.y) { hit = true; break; }
@@ -295,7 +384,14 @@ export function updateProjectiles(game, dt) {
       } catch (err) {
         console.error('[SILENT MERIDIAN] 投掷物引爆失败（已出列，不会重复触发）', err);
       }
-      if (p.mesh) { game.scene.remove(p.mesh); p.mesh = null; }
+      if (p.mesh) {
+        /* 投掷物 mesh 是每次投掷新建的（player.throwGadget），
+           只 remove 不 dispose 会持续泄漏 GPU 资源。 */
+        game.scene.remove(p.mesh);
+        if (p.mesh.geometry) p.mesh.geometry.dispose();
+        if (p.mesh.material) p.mesh.material.dispose();
+        p.mesh = null;
+      }
     }
   }
 }
@@ -306,7 +402,12 @@ export function sweepProjectiles(game) {
   if (game.projectiles.length > limit) {
     for (let i = 0; i < game.projectiles.length - limit; i++) {
       const p = game.projectiles[i];
-      if (p.mesh) game.scene.remove(p.mesh);
+      if (p.mesh) {
+        game.scene.remove(p.mesh);
+        if (p.mesh.geometry) p.mesh.geometry.dispose();
+        if (p.mesh.material) p.mesh.material.dispose();
+        p.mesh = null;
+      }
     }
     game.projectiles.splice(0, game.projectiles.length - limit);
   }
@@ -369,7 +470,7 @@ function losBlockedQuick(game, from, to) {
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
     const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
-    const list = game.world.grid.queryPoint(x, z, []);
+    const list = game.world.grid.queryPoint(x, z, _losScratch);
     for (const b of list) {
       if (b.opaque === false) continue;
       if (x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y && y < b.max.y) return true;

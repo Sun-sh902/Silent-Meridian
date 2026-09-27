@@ -1,11 +1,25 @@
 {
   "name": "silent-meridian",
-  "version": "1.0.0",
-  "description": "The Silent Meridian — 寂静子午线 战术警备模拟",
-  "main": "index.js",
+  "version": "1.1.0",
+  "private": true,
+  "description": "The Silent Meridian (寂静子午线) — a zero-dependency, offline-capable first-person tactical simulation that runs entirely in the browser.",
+  "homepage": "https://sun-sh902.github.io/silent-meridian/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sun-sh902/silent-meridian.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Sun-sh902/silent-meridian/issues"
+  },
   "scripts": {
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "shots": "node tools/readme-shots.mjs",
     "test": "node tools/run-all.mjs",
     "build": "node build.mjs",
+    "test:dist": "node tools/check-dist.mjs",
+    "test:p0": "node tools/p0-test.mjs",
+    "test:p1": "node tools/p1-test.mjs",
     "test:click": "node tools/click-test.mjs",
     "test:fixes": "node tools/fixes-test.mjs",
     "test:map": "node tools/map-test.mjs",
@@ -13,14 +27,29 @@
     "test:responsive": "node tools/responsive-test.mjs",
     "test:audio": "node tools/audio-stress.mjs",
     "test:feel": "node tools/feel-baseline.mjs compare tools/feel-baseline.json",
-    "test:selftest": "node tools/selftest-red.mjs"
+    "test:selftest": "node tools/selftest-red.mjs",
+    "perf": "node tools/perf-probe.mjs",
+    "perf:save": "node tools/perf-probe.mjs --save tools/perf-baseline.json",
+    "perf:diff": "node tools/perf-probe.mjs --diff tools/perf-baseline.json",
+    "bench": "node tools/perf-bench.mjs",
+    "bench:save": "node tools/perf-bench.mjs --save tools/perf-bench.json",
+    "bench:diff": "node tools/perf-bench.mjs --diff tools/perf-bench.json"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "game",
+    "threejs",
+    "webgl",
+    "first-person",
+    "tactics",
+    "browser-game",
+    "no-dependencies",
+    "offline"
+  ],
+  "author": "Sun-sh902",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
-    "three": "^0.180.0"
+    "three": "0.180.0"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

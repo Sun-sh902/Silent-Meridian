@@ -1,10 +1,12 @@
 /* ============================================================
-   tools/p0-test.mjs — 4 个 P0 的复现与回归
+   tools/p0-test.mjs — P0 缺陷的复现与回归
    ------------------------------------------------------------
    P0-1 移动清场：队员到位时调用未定义的 g.onElementArrived
    P0-2 SEMI/PUMP/REVOLVER 打不出子弹（lmbHeld 提前置位）
    P0-3 D 键被调试面板在捕获阶段吞掉，Alt 光标模式下无法右平移
    P0-4 暂停→中止→重新部署后 paused 未复位，新一局冻结
+   P0-5 暂停菜单不改变 state，只看 state 会把 D 变成死键（开不了面板也平移不了）
+   P0-6 elementDone 只写不读，两个小组到位后 boundPhase 无意义地无限翻转
    用法： node tools/p0-test.mjs
    ============================================================ */
 import { Suite } from './harness.mjs';
@@ -165,5 +167,89 @@ check('P0-4 暂停后 paused=true（前置条件成立）', t4a.afterPause === t
 check('P0-4 中止→重新部署后 paused 已复位', t4a.afterDeploy === false, 'paused=' + t4a.afterDeploy);
 check('P0-4 新一局能正常推进（非冻结，走真实主循环）', t4.moved > 0.02,
   '真实位移=' + t4.moved + 'm（冻结时严格为 0），当前 paused=' + t4.pausedNow);
+
+/* ---------------- P0-5 D 键在「暂停菜单」里必须是活的 ---------------- */
+/* 暂停菜单不改变 game.state（仍是 'play'），只把 paused 置位。
+   若归属判定只看 state，暂停时 D 既开不了面板、又因时间冻结而平移不了 → 死键。 */
+async function panelOpenAfterD() {
+  return page.evaluate(() => {
+    const dbg = document.getElementById('debug-panel');
+    return dbg ? !dbg.classList.contains('hidden') : false;
+  });
+}
+async function pressD() {
+  await page.keyboard.down('KeyD');
+  await wait(200);
+  await page.keyboard.up('KeyD');
+  await wait(120);
+}
+
+await page.evaluate(() => {
+  const g = window.__game;
+  g.testMode = true;
+  const dbg = document.getElementById('debug-panel');
+  if (dbg) dbg.classList.add('hidden');
+  g.togglePause(true);                       // 进入暂停菜单：state 仍为 'play'
+});
+await wait(200);
+const t5state = await page.evaluate(() => ({
+  state: window.__game.state,
+  paused: window.__game.paused,
+}));
+await pressD();
+const t5open = await panelOpenAfterD();
+check('P0-5 前置条件：暂停菜单下 state 仍为 play 且 paused=true',
+  t5state.state === 'play' && t5state.paused === true,
+  'state=' + t5state.state + ' paused=' + t5state.paused);
+check('P0-5 暂停菜单里按 D 能唤出调试面板（不是死键）', t5open === true, 'panelOpen=' + t5open);
+
+/* 反向：行动中（未暂停）D 必须仍然属于游戏，不得弹面板 */
+await page.evaluate(() => {
+  const g = window.__game;
+  g.togglePause(false);                      // 回到行动中
+  const dbg = document.getElementById('debug-panel');
+  if (dbg) dbg.classList.add('hidden');
+  g.input.keys.clear();
+});
+await wait(200);
+await pressD();
+const t5play = await page.evaluate(() => {
+  const dbg = document.getElementById('debug-panel');
+  return {
+    panelOpen: dbg ? !dbg.classList.contains('hidden') : false,
+    keySeen: window.__game.input.keys.has('KeyD'),
+  };
+});
+await page.evaluate(() => { window.__game.input.keys.clear(); });
+check('P0-5 行动中按 D 不弹面板（仍归游戏）', t5play.panelOpen === false, 'panelOpen=' + t5play.panelOpen);
+
+/* ---------------- P0-6 elementDone 必须被消费（交替掩护能收敛） ---------------- */
+/* 两个小组都到位后，boundPhase 不应再每 5.5s 无限翻转
+   （旧实现 elementDone 只写不读，会一直翻并把站好位的队员路径反复清空）。 */
+const t6 = await page.evaluate(() => {
+  const g = window.__game;
+  g.testMode = true;
+  g.suspects.forEach((s, i) => { s.pos.x = 900; s.pos.z = 900 + i; });   // 排除交战干扰
+  g.issueClearAt(0, -12);
+  const wp = g.squadWaypoint;
+  const alive = g.squad.filter((m) => m.alive);
+  for (const m of alive) { m.pos.x = wp.x; m.pos.z = wp.z; }             // 全员站上航点
+  for (const m of alive) g.onElementArrived(m);                          // 两个小组各自上报到位
+  const done = g.elementDone.slice();
+  /* 统计翻转次数而不是比较首尾相位 —— 旧实现每帧都会翻转，
+     480 帧后恰好回到原相位，只比首尾会假绿。 */
+  let flips = 0, prev = g.boundPhase;
+  for (let i = 0; i < 60 * 8; i++) {                                     // 推进 8s > 5.5s 计时器
+    g.advance(1 / 60, 1 / 60);
+    if (g.boundPhase !== prev) { flips++; prev = g.boundPhase; }
+  }
+  g.squadOrder = 'hold'; g.squadWaypoint = null;
+  return { done, flips };
+});
+check('P0-6 两个小组到位后 elementDone 被置位并保持',
+  t6.done[0] === true && t6.done[1] === true, 'elementDone=' + JSON.stringify(t6.done));
+check('P0-6 交替掩护收敛：两个小组都到位后 boundPhase 不再翻转（推进 8s）',
+  t6.flips === 0,
+  '翻转次数=' + t6.flips + '（旧实现每帧翻转，8s 内会达到数百次）');
 
 await suite.finish();

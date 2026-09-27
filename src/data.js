@@ -6,8 +6,8 @@
 export const FICTION = {
   authority: 'MERIDIAN PORT AUTHORITY',
   authorityCn: '子午线港务局',
-  operation: 'RAIN VEIL',
-  operationCn: '雨幕',
+  operation: 'SILENT BERTH',
+  operationCn: '静默泊位',
   /* 原创虚构品牌 / 标识，均非现实企业 */
   brands: {
     logistics:  'VOLKERSTADT LOGISTIK',
@@ -47,7 +47,7 @@ export const WEAPONS = {
     damage: 24, rpm: 640, mag: 30, reserve: 150, reload: 2.35,
     spread: 0.010, adsSpread: 0.0035, moveSpread: 0.020,
     recoil: 1.0, muzzle: 0.9, range: 120, adsFov: 46,
-    desc: '港务警备处制式短管步枪，射速可控，雨夜中首发精度稳定。',
+    desc: '港务警备处制式短管步枪，射速可控，夜间首发精度稳定。',
     stats: { 杀伤: 62, 射速: 74, 精度: 70, 操控: 66 },
   },
   vk12: {

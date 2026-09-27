@@ -22,6 +22,13 @@ const browser = await suite.launch({
 });
 const page = await suite.newPage();
 
+/* 布局审计必须在「动画已静止」的状态下测量。
+   否则 .log-item 的入场动画（logIn 从 translateX(14px) 起步）会让一个刚出现的
+   日志项在动画期间被 getBoundingClientRect() 判定为越界 —— 属于纯粹的时间竞态，
+   会让本套件间歇性变红（见 ui.css 的 prefers-reduced-motion 块）。
+   同时这也让「减少动态效果」这一真实用户配置下的布局得到覆盖。 */
+await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const failuresList = [];
 
