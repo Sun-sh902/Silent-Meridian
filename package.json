@@ -15,6 +15,7 @@
     "start": "node tools/serve.mjs",
     "serve": "node tools/serve.mjs",
     "shots": "node tools/readme-shots.mjs",
+    "verify:live": "node tools/verify-live.mjs",
     "test": "node tools/run-all.mjs",
     "build": "node build.mjs",
     "test:dist": "node tools/check-dist.mjs",
