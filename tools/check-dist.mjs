@@ -2,7 +2,7 @@
    check-dist.mjs — dist/ 陈旧检测（不需要浏览器，秒级）
    ------------------------------------------------------------
    为什么需要：
-     dist/ 被 .gitignore 忽略，而 index.html 在 file:// 下加载的正是
+     dist/ 随仓库提交，而 index.html 在 file:// 下加载的正是
      dist/silent-meridian.js。改完 src/ 忘记重新构建时，双击运行的人
      会继续跑旧包，且旧包与新鲜包版本号相同 —— 完全看不出来。
      实际发生过：P0-4（deploy 未复位 paused）已修，但 dist 里没有，

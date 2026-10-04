@@ -13,7 +13,7 @@ import { Suite, ROOT } from './harness.mjs';
 
 const argv = process.argv.slice(2);
 const argOf = (n, d) => { const i = argv.indexOf(n); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-const URL_ = argOf('--url', 'https://sun-sh902.github.io/silent-meridian/');
+const URL_ = argOf('--url', 'https://sun-sh902.github.io/Silent-Meridian/');
 const FILE_ = argOf('--file', 'dist/silent-meridian.html');
 
 const suite = new Suite('verify-live', { failOnPageError: false });
@@ -31,8 +31,15 @@ async function drive(label, target, isFile) {
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console.error: ' + m.text()); });
   page.on('requestfailed', (r) => errors.push('requestfailed: ' + r.url()));
 
-  await page.goto(target, { waitUntil: 'load', timeout: 45000 });
+  const response = await page.goto(target, { waitUntil: 'load', timeout: 45000 });
   await wait(2500);
+
+  if (!response || response.status() >= 400) {
+    suite.check(`${label}：HTTP 响应成功`, false,
+      response ? `status=${response.status()}` : '没有收到响应');
+    await page.close();
+    return;
+  }
 
   const boot = await page.evaluate(() => ({
     game: !!window.__game,

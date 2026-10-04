@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "private": true,
   "description": "The Silent Meridian (寂静子午线) — a zero-dependency, offline-capable first-person tactical simulation that runs entirely in the browser.",
-  "homepage": "https://sun-sh902.github.io/silent-meridian/",
+  "homepage": "https://sun-sh902.github.io/Silent-Meridian/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Sun-sh902/silent-meridian.git"

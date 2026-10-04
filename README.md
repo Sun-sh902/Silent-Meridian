@@ -5,7 +5,7 @@
 > 处理武装嫌疑人、保护平民、找回货单、搜集调度室证据。
 > **先观察，再下令。**
 
-[![在线试玩](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E8%AF%95%E7%8E%A9-GitHub%20Pages-54d6c6?style=flat-square)](https://sun-sh902.github.io/silent-meridian/)
+[![在线试玩](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E8%AF%95%E7%8E%A9-GitHub%20Pages-54d6c6?style=flat-square)](https://sun-sh902.github.io/Silent-Meridian/)
 [![测试](https://img.shields.io/badge/tests-11%2F11%20pass-54d6c6?style=flat-square)](#自检)
 [![许可证](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![依赖](https://img.shields.io/badge/runtime%20deps-three.js%20%E5%94%AF%E4%B8%80-brightgreen?style=flat-square)](#threejs-只有一份运行时)
@@ -14,7 +14,7 @@
 不请求任何网络资源，全部贴图与音效由 canvas / WebAudio 现场程序化生成。
 一条命令跑完 11 套真实 Chrome 验收测试。
 
-[在线试玩](https://sun-sh902.github.io/silent-meridian/) ·
+[在线试玩](https://sun-sh902.github.io/Silent-Meridian/) ·
 [本地启动](#启动方式重要) ·
 [操作说明](#操作) ·
 [自检](#自检)
@@ -461,7 +461,7 @@ npm test            # = node tools/run-all.mjs，11 个套件，逐套件汇总�
 node tools/check-dist.mjs
 ```
 
-`dist/` 被 `.gitignore` 忽略，而 `index.html` 在 `file://` 下加载的正是 `dist/silent-meridian.js`。
+`dist/` 已随仓库提交，而 `index.html` 在 `file://` 下加载的正是 `dist/silent-meridian.js`。
 **改完 `src/` 忘记重新构建时，双击运行的人会继续跑旧包，而旧包与新鲜包的版本号完全相同，从外部看不出任何差别。**
 本脚本用输入文件的内容哈希（`src/**/*.js`、`index.html`、`styles/ui.css`，记录在 `dist/build-stamp.json`）
 与当前值逐项比对，任何一个文件在构建后被改动都会判 FAIL 并列出文件名：
