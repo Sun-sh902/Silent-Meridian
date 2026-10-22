@@ -399,7 +399,7 @@ All 7 files under `src/` use the bare specifier `import ... from 'three'`, which
 
 | Path | Resolves to | Used by |
 | --- | --- | --- |
-| Development (http) | `index.html`'s import map → `vendor/three.module.js` | `npm run dev`-style browsing |
+| Development (http) | `index.html`'s import map → `vendor/three.module.js` | normal `npm start` browsing |
 | Bundle (file://) | esbuild `--alias:three=./vendor/three.module.js` | `dist/*` |
 
 `build.mjs` adds the alias explicitly, pinning the bundle path to `vendor/` as well, **so the two copies cannot diverge**.
