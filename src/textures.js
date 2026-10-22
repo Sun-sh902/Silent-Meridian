@@ -1,5 +1,5 @@
 /* ============================================================
-   textures.js — 程序化画布贴图（原创虚构标识 / 材质细节）
+   textures.js — procedural canvas textures (original fictional signage / material detail)
    ============================================================ */
 import * as THREE from 'three';
 
@@ -19,7 +19,7 @@ function toTex(canvas, repeat) {
   return t;
 }
 
-/* ---------------- 混凝土 / 沥青 ---------------- */
+/* ---------------- Concrete / asphalt ---------------- */
 export function asphaltTexture() {
   const c = mkCanvas(512, 512), g = c.getContext('2d');
   g.fillStyle = '#14181d'; g.fillRect(0, 0, 512, 512);
@@ -28,7 +28,7 @@ export function asphaltTexture() {
     g.fillStyle = `rgba(${v + 8},${v + 10},${v + 14},${0.25 + Math.random() * 0.4})`;
     g.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 2, 1 + Math.random() * 2);
   }
-  // 湿痕
+  // Damp streaks
   for (let i = 0; i < 40; i++) {
     const x = Math.random() * 512, y = Math.random() * 512, r = 20 + Math.random() * 90;
     const grd = g.createRadialGradient(x, y, 0, x, y, r);
@@ -47,7 +47,7 @@ export function concreteTexture() {
     g.fillStyle = `rgba(${v},${v + 3},${v + 7},${0.16 + Math.random() * 0.3})`;
     g.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 3, 1 + Math.random() * 3);
   }
-  // 模板接缝
+  // Formwork seams
   g.strokeStyle = 'rgba(10,12,16,.55)'; g.lineWidth = 2;
   for (let i = 0; i <= 4; i++) {
     g.beginPath(); g.moveTo(0, i * 128); g.lineTo(512, i * 128); g.stroke();
@@ -56,9 +56,9 @@ export function concreteTexture() {
   return toTex(c, [6, 6]);
 }
 
-/* ---------------- 集装箱侧板 ---------------- */
+/* ---------------- Container side panels ---------------- */
 
-/* ---------------- 铁丝网 ---------------- */
+/* ---------------- Wire mesh ---------------- */
 export function fenceTexture() {
   const c = mkCanvas(128, 128), g = c.getContext('2d');
   g.clearRect(0, 0, 128, 128);
@@ -72,9 +72,9 @@ export function fenceTexture() {
   return t;
 }
 
-/* ---------------- 建筑墙面（带污渍） ---------------- */
+/* ---------------- Building wall (with grime) ---------------- */
 
-/* ---------------- 虚构品牌招牌 ---------------- */
+/* ---------------- Fictional brand signage ---------------- */
 export function signTexture(main, sub, opts = {}) {
   const w = 1024, h = 256;
   const c = mkCanvas(w, h), g = c.getContext('2d');
@@ -85,11 +85,11 @@ export function signTexture(main, sub, opts = {}) {
   g.fillStyle = accent;
   g.fillRect(0, 0, 14, h);
   g.fillRect(0, h - 12, w, 12);
-  // 角标
+  // Corner mark
   g.strokeStyle = accent; g.lineWidth = 4;
   g.strokeRect(34, 34, w - 68, h - 68);
   g.textBaseline = 'middle';
-  // 主标题（自适应宽度）
+  // Main title (auto-fit width)
   g.fillStyle = fg;
   let size = 84;
   const fit = (text, max, start, weight, family) => {
@@ -103,15 +103,15 @@ export function signTexture(main, sub, opts = {}) {
   };
   size = fit(main, w - 130, 84, 'bold', '"Helvetica Neue", Arial, sans-serif');
   g.fillText(main, 66, h / 2 - 14);
-  // 副标题
+  // Subtitle
   g.fillStyle = accent;
   fit(sub || '', w - 300, 30, '500', '"SF Mono", Menlo, monospace');
   g.fillText(sub || '', 68, h / 2 + 62);
-  // 编号
+  // Code
   g.fillStyle = 'rgba(220,235,245,.35)';
   g.font = '500 24px "SF Mono", Menlo, monospace';
   g.fillText(opts.code || 'MPA-03', w - 210, h / 2 + 62);
-  // 磨损
+  // Wear
   for (let i = 0; i < 260; i++) {
     g.fillStyle = `rgba(0,0,0,${Math.random() * 0.28})`;
     g.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 6, 1 + Math.random() * 4);
@@ -119,7 +119,7 @@ export function signTexture(main, sub, opts = {}) {
   return toTex(c);
 }
 
-/* ---------------- 集装箱编号 ---------------- */
+/* ---------------- Container numbers ---------------- */
 export function containerCodeTexture(color, code) {
   const c = mkCanvas(512, 256), g = c.getContext('2d');
   g.fillStyle = color; g.fillRect(0, 0, 512, 256);
@@ -143,9 +143,9 @@ export function containerCodeTexture(color, code) {
   return toTex(c);
 }
 
-/* ---------------- 门禁 / 警示 ---------------- */
+/* ---------------- Access control / warnings ---------------- */
 
-/* ---------------- 舱窗 / 舷灯 ---------------- */
+/* ---------------- Portholes / navigation lights ---------------- */
 export function shipHullTexture() {
   const c = mkCanvas(1024, 256), g = c.getContext('2d');
   const grd = g.createLinearGradient(0, 0, 0, 256);
@@ -153,7 +153,7 @@ export function shipHullTexture() {
   grd.addColorStop(0.55, '#131920');
   grd.addColorStop(1, '#0c1116');
   g.fillStyle = grd; g.fillRect(0, 0, 1024, 256);
-  // 舷窗
+  // Portholes
   for (let i = 0; i < 22; i++) {
     const lit = Math.random() < 0.55;
     g.fillStyle = lit ? 'rgba(255,214,150,.85)' : 'rgba(60,80,95,.5)';

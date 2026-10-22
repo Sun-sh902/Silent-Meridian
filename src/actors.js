@@ -1,18 +1,18 @@
 /* ============================================================
-   actors.js — 人物模型、小队 AI、嫌疑人 AI、平民 AI
+   actors.js — character models, squad AI, suspect AI, civilian AI
    ============================================================ */
 import * as THREE from 'three';
 import { clamp, angleDamp, shortAngle, moveCircle, dist2D, makeRng, TAU } from './geom.js';
 import { castRay, sameTeam } from './combat.js';
 import { feel } from './feel.js';
 
-/* 群体分离用的复用坐标缓冲（见 Actor.moveDir） */
+/* Reused coordinate buffer for crowd separation (see Actor.moveDir) */
 const _sepPos = { x: 0, z: 0 };
 
 const rng = makeRng(4242);
 
 /* ============================================================
-   共享材质
+   Shared materials
    ============================================================ */
 export const MAT = {
   squadUniform: new THREE.MeshStandardMaterial({ color: 0x36506e, emissive: 0x0c141d, emissiveIntensity: 1, roughness: 0.85, metalness: 0.06 }),
@@ -40,7 +40,7 @@ function mkCyl(r, h, mat, seg = 8) {
   return m;
 }
 
-/* 步枪 / 手枪模型 */
+/* Rifle / sidearm models */
 function buildRifle(scale = 1) {
   const g = new THREE.Group();
   const body = mkBox(0.075, 0.11, 0.62 * scale, MAT.gun); g.add(body);
@@ -60,7 +60,7 @@ function buildSidearm() {
 }
 
 /* ============================================================
-   人体模型
+   Human model
    ============================================================ */
 export function buildHuman(opts) {
   const kind = opts.kind;         // 'squad' | 'suspect' | 'civilian' | 'player'
@@ -72,7 +72,7 @@ export function buildHuman(opts) {
   const vest = isSquad ? MAT.squadVest : null;
   const scale = opts.scale || 1;
 
-  // 腿
+  // Legs
   const hips = [-0.13, 0.13];
   parts.legs = [];
   hips.forEach((hx, i) => {
@@ -84,7 +84,7 @@ export function buildHuman(opts) {
     parts.legs.push(hip);
   });
 
-  // 躯干
+  // Torso
   const torso = new THREE.Group();
   torso.position.y = 0.92;
   const chest = mkBox(0.52 * scale, 0.62, 0.30 * scale, cloth);
@@ -110,7 +110,7 @@ export function buildHuman(opts) {
   group.add(torso);
   parts.torso = torso;
 
-  // 头 / 头盔 / 头套
+  // Head / helmet / balaclava
   const head = new THREE.Group();
   head.position.y = 1.60;
   const skull = new THREE.Mesh(new THREE.SphereGeometry(0.115, 12, 10), MAT.skin);
@@ -131,7 +131,7 @@ export function buildHuman(opts) {
   group.add(head);
   parts.head = head;
 
-  // 手臂
+  // Arms
   parts.arms = [];
   [-1, 1].forEach((sgn, i) => {
     const sh = new THREE.Group();
@@ -142,7 +142,7 @@ export function buildHuman(opts) {
     parts.arms.push(sh);
   });
 
-  // 武器
+  // Weapon
   if (kind !== 'civilian') {
     const w = kind === 'suspect' && rng.next() < 0.35 ? buildSidearm() : buildRifle(1);
     if (kind === 'suspect' && w.children.length === 3) w.scale.setScalar(0.9);
@@ -155,7 +155,7 @@ export function buildHuman(opts) {
     const bag = mkBox(0.26, 0.30, 0.14, MAT.suspectDark); bag.position.set(0.0, 1.10, 0.20); group.add(bag);
   }
 
-  // 接地阴影
+  // Contact shadow
   const blobC = document.createElement('canvas');
   blobC.width = blobC.height = 64;
   const bg = blobC.getContext('2d');
@@ -176,7 +176,7 @@ export function buildHuman(opts) {
 }
 
 /* ============================================================
-   单位标记（准星上方图标）
+   Unit markers (icon above the crosshair)
    ============================================================ */
 function markerTexture(kind) {
   const c = document.createElement('canvas');
@@ -210,7 +210,7 @@ const MARKER_TEX = {
 };
 
 /* ============================================================
-   基础角色
+   Base actor
    ============================================================ */
 let ACTOR_ID = 0;
 
@@ -234,10 +234,10 @@ export class Actor {
     this.speed = cfg.speed || 1.6;
     this.vel = 0;
     this.path = null; this.pathIdx = 0; this.pathAge = 0;
-    /* 识别度：友军天然是「已识别」，否则面向队友会显示成 UNKNOWN CONTACT */
+    /* Identification: friendlies are inherently "identified"; otherwise facing a teammate would show UNKNOWN CONTACT */
     const isFriendly = (this.kind === 'squad' || this.kind === 'player');
-    this.ident = isFriendly ? 1 : 0;   // 玩家识别度 0..1
-    this.seen = isFriendly;            // 玩家是否曾看见
+    this.ident = isFriendly ? 1 : 0;   // player identification 0..1
+    this.seen = isFriendly;            // whether the player has seen them
     this.identified = isFriendly;
     this.blind = 0;
     this.suppression = 0;
@@ -277,7 +277,7 @@ export class Actor {
   get eye() { return { x: this.pos.x, y: this.y + (this.crouch ? 1.15 : 1.62), z: this.pos.z }; }
   get dist() { return dist2D(this.pos.x, this.pos.z, this.game.player.pos.x, this.game.player.pos.z); }
 
-  /* -------- 视觉 -------- */
+  /* -------- Visuals -------- */
   animate(dt) {
     const p = this.parts;
     const spd = Math.min(this.vel, 5);
@@ -304,9 +304,9 @@ export class Actor {
       p.head.rotation.z = Math.sin(this.phase * 4) * 0.25;
       p.head.rotation.x = 0.3;
     } else if (p.head) {
-      /* dt 归一化回正：原来的「每帧 *0.95」在 144Hz 下回正速度快 2.4 倍，
-         受击甩头/致盲低头的恢复速度会随刷新率变化。 */
-      const k = Math.exp(-dt * 3.08);   // 等效 60fps 下的 0.95
+      /* dt-normalized recovery: the old "*0.95 per frame" recovered 2.4× faster at 144 Hz,
+         so hit reactions and blind-head-drop recovery varied with refresh rate. */
+      const k = Math.exp(-dt * 3.08);   // equivalent to 0.95 at 60fps
       p.head.rotation.x *= k;
       p.head.rotation.z *= k;
     }
@@ -336,19 +336,19 @@ export class Actor {
     }
   }
 
-  /* -------- 移动 -------- */
+  /* -------- Movement -------- */
   moveDir(fx, fz, speed, dt) {
     const len = Math.hypot(fx, fz) || 1;
     const m = speed * dt;
-    /* 用位移向量的模长算速度。
-       这里曾经写的是 Math.abs(this.pos.x + this.pos.z - before) —— 坐标「和」的变化量，
-       对 dx = -dz 的斜向移动恒等于 0（yaw=0 时按 W+D 全速前进，vel 却读数为 0），
-       导致走路动画冻结、移动扩散惩罚失效、警觉与识别加成不触发。 */
+    /* Compute speed from the magnitude of the displacement vector.
+       This used to be Math.abs(this.pos.x + this.pos.z - before) — the change in the coordinate *sum*,
+       which is always 0 for diagonal movement with dx = -dz (at yaw=0, pressing W+D moved at full speed while vel read 0),
+       freezing the walk animation, disabling the moving-spread penalty, and suppressing awareness/identification bonuses. */
     const x0 = this.pos.x, z0 = this.pos.z;
     moveCircle(this.game.world.grid, this.pos, this.radius, (fx / len) * m, (fz / len) * m,
       this.y, this.height);
     this.vel = Math.hypot(this.pos.x - x0, this.pos.z - z0) / Math.max(dt, 1e-4);
-    // 分离（复用同一个坐标缓冲，避免每次推挤都新建对象）
+    // Separation (reuse the same coordinate buffer, avoiding a new object for every push)
     const q = _sepPos;
     for (const o of this.game.actors) {
       if (o === this || !o.alive) continue;
@@ -374,7 +374,7 @@ export class Actor {
     return !!p;
   }
 
-  /** 沿路径前进；返回是否已到达终点 */
+  /** Advance along the path; returns whether the end has been reached */
   followPath(dt, speed) {
     if (!this.path || this.pathIdx >= this.path.length) { this.vel = 0; return true; }
     const wp = this.path[this.pathIdx];
@@ -390,7 +390,7 @@ export class Actor {
 
   stop() { this.path = null; this.vel = 0; }
 
-  /* -------- 感知 -------- */
+  /* -------- Perception -------- */
   canSee(target, maxDist, fovCos) {
     const eye = this.eye;
     const tgt = target.eye || { x: target.pos.x, y: target.y + 1.2, z: target.pos.z };
@@ -404,7 +404,7 @@ export class Actor {
     return !this.game.losBlocked(eye.x, eye.y, eye.z, tgt.x, tgt.y, tgt.z);
   }
 
-  /* -------- 战斗 -------- */
+  /* -------- Combat -------- */
   suppress(amount, level = 1) {
     this.suppression = Math.min(3, this.suppression + amount);
     if (this.kind === 'suspect') this.morale = Math.max(0, this.morale - 0.035 * amount * level);
@@ -413,9 +413,9 @@ export class Actor {
 
   takeDamage(dmg, from, point) {
     if (!this.alive) return;
-    // 兜底：即使有其它伤害入口（爆炸、脚本），同阵营也绝不吃伤害
+    // Backstop: even with other damage sources (explosions, scripts), same-team actors never take damage
     if (from && from !== this && sameTeam(from, this)) return;
-    if (feel.debug.invincible && this.kind === 'player') return;   // 调参用无敌
+    if (feel.debug.invincible && this.kind === 'player') return;   // tuning-panel invincibility
     this.hp -= dmg;
     this.suppress(0.9, 1);
     this.lastHitFrom = from;
@@ -456,10 +456,10 @@ export class Actor {
     this.group.rotation.x = 0;
     this.group.position.y = 0;
     if (this.marker) this.marker.visible = true;
-    this.game.log(`${this.callsign} 恢复行动能力`, 'good');
+    this.game.log(`${this.callsign} back on their feet`, 'good');
   }
 
-  /* -------- 射击目标选择 -------- */
+  /* -------- Fire target selection -------- */
   pickTarget(maxDist, preferred) {
     const g = this.game;
     let best = null, bestScore = -Infinity;
@@ -490,7 +490,7 @@ export class Actor {
     dx /= dist; dy /= dist; dz /= dist;
     const spread = spreadBase * (1 + this.suppression * 0.5 + (this.vel > 0.4 ? 1.2 : 0));
     const a = Math.random() * TAU, r = Math.random() * spread;
-    // 在垂直于视线方向上加偏移
+    // Offset perpendicular to the line of sight
     const upx = 0, upy = 1, upz = 0;
     let rx = dy * upz - dz * upy, ry = dz * upx - dx * upz, rz = dx * upy - dy * upx;
     const rl = Math.hypot(rx, ry, rz) || 1; rx /= rl; ry /= rl; rz /= rl;
@@ -529,7 +529,7 @@ export class Actor {
 }
 
 /* ============================================================
-   小队成员
+   Squad member
    ============================================================ */
 const FORMATION = [
   { r: -2.3, b: 2.0 },
@@ -578,7 +578,7 @@ export class SquadMember extends Actor {
     const order = g.squadOrder;
     if (this.reportCd > 0) this.reportCd -= dt;
 
-    // 目标选择
+    // Target selection
     const target = this.pickTarget(58, 'suspect');
     const engaged = !!target && g.weaponsFree;
     this.aimTarget = (target && g.weaponsFree) ? target : null;
@@ -635,7 +635,7 @@ export class SquadMember extends Actor {
       }
     }
 
-    // 报告与开火
+    // Report and fire
     if (target) {
       this.report(target);
       if (engaged && this.fireCd <= 0) {
@@ -665,14 +665,14 @@ export class SquadMember extends Actor {
     if (this.kind !== 'squad') return;
     const g = this.game;
     if (!target.seen) {
-      /* 小队先于玩家发现接触：标记为「已知但未识别」并呼叫。
-         此前这里直接 `return`，导致下面那一支永远不可达 ——
-         小队永远不可能先敌发现，LINES.squadSpotUnknown 成了死数据。
-         注意 seen 只影响「未识别接触（?）」标记是否出现（README 的核心机制之一），
-         识别（identified / ident）仍然要由玩家或共享识别流程推进。 */
+      /* The squad spots a contact before the player: mark it "seen but unidentified" and call it out.
+         This used to `return` here, making the branch below unreachable —
+         the squad could never spot the enemy first, and LINES.squadSpotUnknown became dead data.
+         Note that seen only controls whether the "unidentified contact (?)" marker appears (one of the README's core mechanics);
+         identification (identified / ident) still has to be advanced by the player or the shared identification flow. */
       target.seen = true;
       g.squadReport('squadSpotUnknown', this, target);
-      g.addMapEvent(target.pos.x, target.pos.z, '小队报告：有动静', 'sighting');
+      g.addMapEvent(target.pos.x, target.pos.z, 'Squad report: movement', 'sighting');
       this.reportCd = 2.5;
       return;
     }
@@ -689,7 +689,7 @@ export class SquadMember extends Actor {
 }
 
 /* ============================================================
-   嫌疑人
+   Suspect
    ============================================================ */
 export class Suspect extends Actor {
   constructor(game, cfg) {
@@ -708,7 +708,7 @@ export class Suspect extends Actor {
     this.elite = !!cfg.elite;
     this.weaponDamage = cfg.elite ? 17 : 14;
     this.fireCd = 1 + Math.random() * 1.5;
-    /* 首个点射就是完整的 3~5 发；burstGap 必须为正，否则第一轮点射后会立刻续射 */
+    /* The first burst is a full 3–5 rounds; burstGap must be positive, or the next burst starts immediately after the first */
     this.burstLeft = 3 + Math.floor(Math.random() * 3);
     this.burstGap = 0.55 + Math.random() * 0.5;
     this.coverPos = null;
@@ -749,7 +749,7 @@ export class Suspect extends Actor {
       return;
     }
 
-    // 感知
+    // Perception
     const seen = this.perceive(dt);
     this.morale = Math.min(1, this.morale + dt * 0.02);
     if (this.morale < 0.32 && this.hp < this.maxHp * 0.7 && !this.detained) {
@@ -784,7 +784,7 @@ export class Suspect extends Actor {
     if (best) {
       this.seenTarget = best;
       let rate = (bestD < 10 ? 3.2 : bestD < 22 ? 2.0 : 1.1) * dt;
-      if (g.lightOn && bestD < 46) rate *= 1.55;   // 战术灯暴露位置
+      if (g.lightOn && bestD < 46) rate *= 1.55;   // the tactical light gives the position away
       if (best.kind === 'squad' && best.vel > 1.6) rate *= 1.25;
       this.awareness += rate;
       if (this.awareness >= 1 && !this.alerted) {
@@ -802,7 +802,7 @@ export class Suspect extends Actor {
       this.awareness = Math.max(0, this.awareness - dt * 0.35);
     }
     if (this.alerted) {
-      // 保持对最近威胁的追踪
+      // Keep tracking the nearest threat
       if (!this.target || !this.target.alive) this.target = this.seenTarget || this.target;
     }
     return this.awareness >= 1;
@@ -818,7 +818,7 @@ export class Suspect extends Actor {
     }
     const route = this.patrolRoute;
     if (!route) {
-      // 站岗：缓慢环视
+      // Sentry post: slow scan
       this.vel = 0;
       this.scanPhase += dt * 0.55;
       if (this.baseYaw === undefined) this.baseYaw = this.yaw;
@@ -855,11 +855,11 @@ export class Suspect extends Actor {
     const d = dist2D(this.pos.x, this.pos.z, this.target.pos.x, this.target.pos.z);
     const visible = this.canSee(this.target, 60, undefined);
 
-    /* 找掩体：由 coverTimer 统一节流。
-       原来的条件写成 `(!this.coverPos || this.coverTimer <= 0)` —— 只要 coverPos 为空，
-       前半段就恒为真，于是「找不到掩体」或「掩体被判定不可达而清空」时，
-       会变成每帧（50% 概率）调用一次 findCoverFor + setPath。
-       改成只看 coverTimer，并让它在每次搜索后（无论成功与否）都重置。 */
+    /* Cover search: throttled centrally by coverTimer.
+       The old condition was `(!this.coverPos || this.coverTimer <= 0)` — whenever coverPos was empty
+       the first half was always true, so "no cover found" or "cover cleared as unreachable"
+       became a findCoverFor + setPath call every frame (50% chance).
+       Now it only checks coverTimer, and resets it after every search (success or failure). */
     if (this.coverTimer === undefined) this.coverTimer = 0;
     this.coverTimer -= dt;
     if (visible && this.coverTimer <= 0 && Math.random() < 0.5) {
@@ -871,21 +871,21 @@ export class Suspect extends Actor {
       const cd = dist2D(this.pos.x, this.pos.z, this.coverPos.x, this.coverPos.z);
       if (cd > 0.8) {
         if (!this.path || this.pathAge <= 0) {
-          /* setPath 返回 null 说明这个掩体不在导航网格上（或不可达）。
-             此时 this.path 恒为 null，若不做处理就会每帧触发一次全量 A*
-             （最多 5200 节点、open list 线性扫描），并且原先的 return 会跳过
-             下面的瞄准与开火段 —— 嫌疑人卡死在原地、再也不开枪。
-             这里的做法是直接放弃这个掩体并加冷却，让 AI 回落到常规分支。 */
+          /* A null return from setPath means this cover is not on the navigation grid (or is unreachable).
+             In that case this.path stays null, and without handling it would trigger a full A* every frame
+             (up to 5,200 nodes, linear open-list scan); the old return also skipped the aiming and firing code below —
+             leaving the suspect stuck in place and never firing again.
+             The approach here is to abandon this cover and add a cooldown, letting the AI fall back to the normal branch. */
           if (!this.setPath(this.coverPos.x, this.coverPos.z)) {
             this.coverPos = null;
-            this.coverTimer = 1.5;      // 冷却：不要因为「掩体被清空」就立刻重新搜一遍
+            this.coverTimer = 1.5;      // cooldown: don't immediately re-search just because cover was cleared
             this.pathAge = 0;
           } else {
             this.pathAge = 2.0;
           }
         }
         this.pathAge -= dt;
-        /* 不再 return：即便在向掩体移动，也要继续执行瞄准与开火 */
+        /* No longer returns: even while moving to cover, keep aiming and firing */
         if (this.coverPos) {
           this.followPath(dt, this.speed * 1.25);
           this.targetYaw = Math.atan2(-(this.target.pos.x - this.pos.x), -(this.target.pos.z - this.pos.z));
@@ -897,15 +897,15 @@ export class Suspect extends Actor {
         this.crouch = true;
       }
     } else if (!visible && d > 14) {
-      // 逼近
+      // Close the distance
       if (!this.path || this.pathAge <= 0) { this.setPath(this.target.pos.x, this.target.pos.z); this.pathAge = 1.8; }
       this.pathAge -= dt;
       this.followPath(dt, this.speed * 1.1);
     } else {
-      /* 已进入交火距离且无掩体可用：站定射击。
-         注意：这里原本写了 this.strafe 的赋值，但全项目没有任何地方读它 ——
-         属于自欺欺人的死代码（读者会以为敌人在侧移，其实站着不动）。
-         真要加侧移，就用 moveDir 沿目标垂线移动；在那之前不保留假实现。 */
+      /* Within engagement range with no usable cover: stand and shoot.
+         Note: this used to assign this.strafe, but nothing in the project ever read it —
+         self-deceiving dead code (readers would think the enemy was strafing while it stood still).
+         To actually add strafing, use moveDir along the perpendicular to the target; until then, keep no fake implementation. */
       this.vel = 0;
     }
 
@@ -914,10 +914,10 @@ export class Suspect extends Actor {
     this.updateEngageFire(dt, visible);
   }
 
-  /* 交火开火：3~5 连发点射，发间 0.11s，点射之间用 burstGap 停顿。
-     旧实现把 `fireCd <= 0` 放在最前面判，于是续点射需要 `0 < fireCd <= 0.02`
-     这个极窄窗口，实际退化成节拍器式单发（~545rpm）+ 偶发杂散点射；
-     burstGap 被赋值却从未被读取。 */
+  /* Engagement fire: 3–5 round bursts, 0.11 s between rounds, burstGap pause between bursts.
+     The old implementation checked `fireCd <= 0` first, so continuing a burst required the extremely narrow
+     `0 < fireCd <= 0.02` window; in practice it degenerated into metronomic single shots (~545 rpm) plus occasional stray bursts,
+     and burstGap was assigned but never read. */
   updateEngageFire(dt, visible) {
     if (this.fireCd > 0) return;
     const aimAt = this.seenTarget;
@@ -933,10 +933,10 @@ export class Suspect extends Actor {
     this.shootAt(aimAt, spread, 1, 0xffb27a);
     this.burstLeft--;
     if (this.burstLeft > 0) {
-      this.fireCd = 0.11;                              // 点射内间隔
+      this.fireCd = 0.11;                              // interval within a burst
     } else {
-      this.burstLeft = 3 + Math.floor(Math.random() * 3);   // 下一轮 3~5 发
-      this.fireCd = this.burstGap;                     // 点射之间的停顿
+      this.burstLeft = 3 + Math.floor(Math.random() * 3);   // next burst 3–5 rounds
+      this.fireCd = this.burstGap;                     // pause between bursts
       this.burstGap = 0.55 + Math.random() * 0.5;
     }
   }
@@ -951,12 +951,12 @@ export class Suspect extends Actor {
 }
 
 /* ============================================================
-   平民
+   Civilian
    ============================================================ */
 export class Civilian extends Actor {
   constructor(game, cfg) {
     super(game, {
-      kind: 'civilian', name: cfg.label || '平民', x: cfg.x, z: cfg.z,
+      kind: 'civilian', name: cfg.label || 'Civilian', x: cfg.x, z: cfg.z,
       yaw: Math.random() * TAU, hp: 60, speed: 1.5,
     });
     this.state = 'cower';
@@ -1006,7 +1006,7 @@ export class Civilian extends Actor {
     if (this.panicT > 0) {
       this.panicT -= dt;
       this.crouch = false;
-      // 远离威胁
+      // Move away from the threat
       let tx = this.pos.x, tz = this.pos.z;
       const src = this.threat;
       if (src) {
@@ -1023,7 +1023,7 @@ export class Civilian extends Actor {
       this.state = 'cower';
       this.crouch = true;
       this.vel = 0;
-      // 面向最近的小队成员
+      // Face the nearest squad member
       let nearest = g.player, nd = Infinity;
       for (const a of g.squad.concat([g.player])) {
         if (!a.alive) continue;
@@ -1034,7 +1034,7 @@ export class Civilian extends Actor {
       if (this.parts.torso) this.parts.torso.rotation.z = Math.sin(this.tremble) * 0.03;
     }
 
-    // 检测威胁
+    // Detect threats
     if (!this.threat || Math.random() < dt) {
       let t = null, td = 30;
       for (const s of g.suspects) {

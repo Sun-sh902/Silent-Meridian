@@ -1,8 +1,8 @@
 /* ============================================================
-   tools/feel-baseline.mjs - 手感回归基线（固定步长，逐位可复现）
+   tools/feel-baseline.mjs - feel regression baseline (fixed timestep, bit-reproducible)
    ------------------------------------------------------------
-   用 1/60s 固定步长驱动 game.advance()，屏蔽 rAF 抖动与渲染差异。
-   用法：
+   Drives game.advance() at a fixed 1/60 s timestep, masking rAF jitter and rendering differences.
+   Usage:
      node tools/feel-baseline.mjs capture tools/feel-baseline.json
      node tools/feel-baseline.mjs compare tools/feel-baseline.json
    ============================================================ */
@@ -18,7 +18,7 @@ const browser = await suite.launch({
   defaultViewport: { width: 1280, height: 720 },
 });
 const page = await suite.newPage();
-/* 固定随机序列：水平后坐力等处使用 Math.random，必须可复现 */
+/* Fixed random sequence: horizontal recoil and similar use Math.random, and must be reproducible */
 await page.evaluateOnNewDocument(() => {
   let seed = 0x2f6e2b1;
   window.__randCalls = 0;
@@ -29,19 +29,19 @@ await page.evaluateOnNewDocument(() => {
     seed ^= seed << 5; seed >>>= 0;
     return seed / 4294967296;
   };
-  /* 供基准脚本在「随机敏感的测量点」前把随机流钉到固定位置。
-     没有这个的话，任何在别处改变了 Math.random 消费次数的改动（例如 AI 逻辑）
-     都会让 recoil.yawSeq 整段错位 —— 那测的是「随机流位置」，不是后坐力逻辑。 */
+  /* Lets the baseline script pin the random stream before random-sensitive measurement points.
+     Without it, any change that alters the number of Math.random calls elsewhere (e.g. AI logic)
+     would shift the whole recoil.yawSeq — measuring "random stream position", not recoil logic. */
   window.__reseed = (v = 0x2f6e2b1) => { seed = v >>> 0; window.__randCalls = 0; };
 });
 await page.goto('http://127.0.0.1:8209/?deploy=1&test=1', { waitUntil: 'load' });
-await new Promise((r) => setTimeout(r, 2600));   // ?test=1 已冻结 rAF 步进，热身不再引入随机流漂移
+await new Promise((r) => setTimeout(r, 2600));   // ?test=1 already freezes rAF stepping, so warm-up adds no random-stream drift
 
 const data = await page.evaluate(() => {
   const g = window.__game;
   const P = g.player;
   const DT = 1 / 60;
-  g.testMode = true;   // 双保险（URL 参数已设置）
+  g.testMode = true;   // belt and braces (the URL parameter is already set)
   const r6 = (v) => +v.toFixed(6);
   const r8 = (v) => +v.toFixed(8);
 
@@ -63,7 +63,7 @@ const data = await page.evaluate(() => {
 
   const out = {};
 
-  /* 1. 各姿态稳态速度与 FOV（跑 1 秒后按位移反算） */
+  /* 1. Steady-state speed and FOV per stance (derived from displacement after running 1 s) */
   const measure = (keys, rmb) => {
     reset();
     keys.forEach((k) => g.input.keys.add(k));
@@ -83,7 +83,7 @@ const data = await page.evaluate(() => {
     back: measure(['KeyS'], false),
   };
 
-  /* 2. 起步斜坡与松手刹车（当前应为瞬时 ⇒ 首步即满速、松手即停） */
+  /* 2. Acceleration ramp and release braking (currently instant ⇒ full speed on step one, stop on release) */
   reset();
   g.input.keys.add('KeyW');
   const ramp = [];
@@ -97,7 +97,7 @@ const data = await page.evaluate(() => {
   g.advance(DT, DT);
   out.ramp = { perStep: ramp, afterRelease: r6(Math.hypot(P.pos.x - px, P.pos.z - pz) / DT) };
 
-  /* 3. 相机：行走时的 roll 峰值与头部起伏 */
+  /* 3. Camera: peak roll and head bob while walking */
   reset();
   g.input.keys.add('KeyW');
   let rollMax = 0, bobY = 0;
@@ -109,7 +109,7 @@ const data = await page.evaluate(() => {
   }
   out.camera = { rollMax: r6(rollMax), bobY: r6(bobY) };
 
-  /* 4. 扩散：连发累积 */
+  /* 4. Spread: burst accumulation */
   reset();
   P.logShots = true;
   g.input.lmb = true;
@@ -121,7 +121,7 @@ const data = await page.evaluate(() => {
     last: r8(P.shotLog.length ? P.shotLog[P.shotLog.length - 1].s : 0),
   };
 
-  /* 5. 后坐力：逐发累积（帧间不衰减）与序列可复现性 */
+  /* 5. Recoil: per-shot accumulation (no decay between frames) and sequence reproducibility */
   const pitchAfter = (k) => {
     reset(); P.logShots = true;
     for (let i = 0; i < k; i++) { P.fireCd = 0; P.fireOnce(); }
@@ -129,8 +129,8 @@ const data = await page.evaluate(() => {
   };
   out.recoil = {
     pitchAfter: [1, 2, 3, 5, 8, 13].map(pitchAfter),
-    /* 水平后坐力逐发取自 Math.random，因此先把随机流钉到固定位置再测，
-       否则这段序列会被「别处多消耗了几次随机数」整体推移。 */
+    /* Horizontal recoil is drawn from Math.random per shot, so pin the random stream before measuring;
+       otherwise the sequence shifts wholesale when a few extra random numbers are consumed elsewhere. */
     yawSeq: (() => {
       reset(); window.__reseed(0x51ed); P.logShots = true;
       for (let i = 0; i < 5; i++) { P.fireCd = 0; P.fireOnce(); }
@@ -143,7 +143,7 @@ const data = await page.evaluate(() => {
   step(60);
   out.recoil.decay = { start: r8(decay0), afterOneSecond: r8(P.recoil.pitch) };
 
-  /* 6. 换弹 / 切枪 / ADS 过渡 */
+  /* 6. Reload / weapon switch / ADS transition */
   reset();
   P.mag.primary = 0; P.startReload();
   let rs = 0;
@@ -164,7 +164,7 @@ const data = await page.evaluate(() => {
   while (P.ads > 0.001 && aout < 600) { g.advance(DT, DT); aout++; }
   out.reload.adsOutSeconds = r6(aout * DT);
 
-  /* 7. 反馈：震动包络与枪口闪光时长 */
+  /* 7. Feedback: shake envelope and muzzle-flash duration */
   reset();
   g.shake(0.28, 0.12);
   out.feedback = { shakeStart: r6(g.camShake) };
@@ -175,7 +175,7 @@ const data = await page.evaluate(() => {
   out.feedback.muzzleTimer = r6(g.effects.muzzleTimer);
   out.feedback.hitmarkerTime = r6(0);
 
-  /* 8. 元信息（用于确认测的就是当前配装） */
+  /* 8. Metadata (to confirm the measurement used the current loadout) */
   out.meta = {
     randCalls: window.__randCalls,
     armorSpeed: P.armor.speed, armorHp: P.armor.hp,
@@ -194,9 +194,9 @@ const file = process.argv[3] || join(root, 'tools', 'feel-baseline.json');
 
 if (mode === 'capture') {
   await writeFile(file, JSON.stringify(data, null, 2), 'utf8');
-  console.log('已采集基线 -> ' + file);
+  console.log('Baseline captured -> ' + file);
   console.log(JSON.stringify(data, null, 2));
-  suite.check('采集期间页面无异常', suite.pageErrors.length === 0, suite.pageErrors.slice(0, 2).join(' | '));
+  suite.check('No page errors during capture', suite.pageErrors.length === 0, suite.pageErrors.slice(0, 2).join(' | '));
   await suite.finish();
 } else {
   const old = JSON.parse(await readFile(file, 'utf8'));
@@ -210,7 +210,7 @@ if (mode === 'capture') {
       return;
     }
     if (Array.isArray(a) && Array.isArray(b)) {
-      if (a.length !== b.length) { diffs.push(path + ': 长度 ' + a.length + ' -> ' + b.length); return; }
+      if (a.length !== b.length) { diffs.push(path + ': length ' + a.length + ' -> ' + b.length); return; }
       a.forEach((v, i) => walk(v, b[i], path + '[' + i + ']'));
       return;
     }
@@ -222,23 +222,23 @@ if (mode === 'capture') {
     if (a !== b) diffs.push(path + ': ' + JSON.stringify(a) + ' -> ' + JSON.stringify(b));
   };
   walk(old, data, '');
-  /* meta.* 是「随机流位置」之类的诊断量，不是手感指标。
-     任何在别处改变了 Math.random 消费次数的改动都会让它变化，
-     若把它算作回归，「手感基线变红」就会变成噪声 —— 只报告、不判失败。
-     （recoil.yawSeq 已在采集前用 __reseed 钉住随机流，因此仍可作为硬断言。） */
+  /* meta.* holds diagnostics such as "random stream position", not feel metrics.
+     Any change in the number of Math.random calls elsewhere alters it; counting it as a regression
+     would turn "feel baseline red" into noise — so report only, never fail.
+     (recoil.yawSeq is pinned with __reseed before capture, so it can remain a hard assertion.) */
   const feelDiffs = diffs.filter((d) => !d.startsWith('meta.'));
   const infoDiffs = diffs.filter((d) => d.startsWith('meta.'));
   console.log('');
-  console.log('===== 手感回归比对 =====');
-  if (!feelDiffs.length) console.log('[PASS] 手感指标与基线逐位相同（行为零变化）');
+  console.log('===== FEEL REGRESSION COMPARISON =====');
+  if (!feelDiffs.length) console.log('[PASS] Feel metrics are bit-identical to the baseline (zero behavior change)');
   else {
-    console.log('[FAIL] 发现 ' + feelDiffs.length + ' 处手感差异：');
+    console.log('[FAIL] Found ' + feelDiffs.length + ' feel differences:');
     feelDiffs.slice(0, 40).forEach((d) => console.log('   ' + d));
   }
   if (infoDiffs.length) {
-    console.log('[info] ' + infoDiffs.length + ' 处诊断量变化（不计入失败）：');
+    console.log('[info] ' + infoDiffs.length + ' diagnostic changes (not counted as failures):');
     infoDiffs.slice(0, 6).forEach((d) => console.log('   ' + d));
   }
-  suite.check('手感指标与基线逐位一致', feelDiffs.length === 0, feelDiffs.slice(0, 3).join(' | '));
-  await suite.finish();   // 页面异常在这里一并计入退出码（原先的打印在 exit 之后，永远不可达）
+  suite.check('Feel metrics are bit-identical to the baseline', feelDiffs.length === 0, feelDiffs.slice(0, 3).join(' | '));
+  await suite.finish();   // page errors are folded into the exit code here (the old print ran after exit and was unreachable)
 }

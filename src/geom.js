@@ -1,5 +1,5 @@
 /* ============================================================
-   geom.js — 数学、空间网格、视线与碰撞
+   geom.js — math, spatial grid, line of sight and collision
    ============================================================ */
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -28,7 +28,7 @@ export function dist3D(a, b) {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-/** 确定性随机数（用于关卡装饰，保证每次布局一致） */
+/** Deterministic RNG (for level decoration, keeping every layout identical) */
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -50,8 +50,8 @@ export function makeRng(seed) {
 }
 
 /* ============================================================
-   AABB 碰撞网格
-   盒子用 {min:{x,y,z}, max:{x,y,z}, tag, stepOver?} 表示
+   AABB collision grid
+   Boxes are {min:{x,y,z}, max:{x,y,z}, tag, stepOver?}
    ============================================================ */
 
 export class Grid {
@@ -77,7 +77,7 @@ export class Grid {
     }
     return box;
   }
-  /** 查询与给定矩形相交的盒子（去重） */
+  /** Query boxes intersecting a given rectangle (deduplicated) */
   queryRect(x0, z0, x1, z1, out) {
     out = out || [];
     out.length = 0;
@@ -101,7 +101,7 @@ export class Grid {
   }
 }
 
-/** 视线：从 A 到 B 是否被遮挡（步进采样 + 空间网格） */
+/** Line of sight: whether A to B is blocked (stepped sampling + spatial grid) */
 const _scratchLos = [];
 export function losBlocked(grid, ax, ay, az, bx, by, bz, ignoreTag) {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
@@ -110,8 +110,8 @@ export function losBlocked(grid, ax, ay, az, bx, by, bz, ignoreTag) {
   const steps = Math.min(140, Math.max(2, Math.ceil(len / 0.7)));
   const ix = dx / steps, iy = dy / steps, iz = dz / steps;
   let x = ax, y = ay, z = az;
-  /* 复用模块级缓冲：本函数每次调用都会走一遍，原先每次都新建一个数组。
-     这是零 GC 的小改动，但它在感知循环里每帧被调用几十次。 */
+  /* Reuse a module-level buffer: this runs on every call, and it used to allocate a new array each time.
+     A small zero-GC change, but it is called dozens of times per frame in the perception loop. */
   const scratch = _scratchLos;
   for (let s = 1; s < steps; s++) {
     x += ix; y += iy; z += iz;
@@ -140,10 +140,10 @@ Grid.prototype.queryPoint = function (x, z, out) {
   return out;
 };
 
-/** 圆形角色移动：分轴推进 + 推出 */
+/** Circular character movement: per-axis advance + push-out */
 const _scratchA = [];
-/* 单轴解算抽成模块级函数：原先写成 moveCircle 内部的闭包，
-   每帧每个角色调用一次 = 每帧新建 18~20 个闭包。 */
+/* Per-axis resolution extracted to a module-level function: it used to be a closure inside moveCircle,
+   called once per actor per frame = 18–20 new closures every frame. */
 function _resolveAxis(grid, pos, radius, axis, delta, feetY, top, canStep) {
   if (delta === 0) return;
   pos[axis] += delta;
@@ -151,8 +151,8 @@ function _resolveAxis(grid, pos, radius, axis, delta, feetY, top, canStep) {
   for (let i = 0; i < list.length; i++) {
     const b = list[i];
     if (b.noCollide) continue;
-    if (b.max.y <= feetY + canStep) continue;      // 可跨过的矮物
-    if (b.min.y >= top - 0.02) continue;           // 头顶上方
+    if (b.max.y <= feetY + canStep) continue;      // low obstacle that can be stepped over
+    if (b.min.y >= top - 0.02) continue;           // above head height
     if (pos.x + radius <= b.min.x || pos.x - radius >= b.max.x) continue;
     if (pos.z + radius <= b.min.z || pos.z - radius >= b.max.z) continue;
     if (axis === 'x') pos.x = delta > 0 ? b.min.x - radius : b.max.x + radius;
@@ -166,7 +166,7 @@ export function moveCircle(grid, pos, radius, dx, dz, feetY, height, canStep = 0
   return pos;
 }
 
-/** 判断某点是否落在任何盒子内（用于出生点检测） */
+/** Whether a point falls inside any box (used for spawn-point checks) */
 const _scratchFree = [];
 export function pointFree(grid, x, z, radius, feetY, height) {
   const list = grid.queryCircle(x, z, radius, _scratchFree);
@@ -183,16 +183,16 @@ export function pointFree(grid, x, z, radius, feetY, height) {
   return true;
 }
 
-/** 转向：把世界方向转到相对朝向的时钟方位 */
+/** Bearing: convert a world direction to a clock position relative to facing */
 export function clockDirection(fromX, fromZ, facing, targetX, targetZ) {
   const ang = Math.atan2(targetX - fromX, -(targetZ - fromZ));
   let rel = ang - facing;
   rel = ((rel + Math.PI) % TAU + TAU) % TAU - Math.PI;
   const idx = Math.round(((rel + TAU) % TAU) / (TAU / 12)) % 12;
-  return idx; // 0 = 12 点方向
+  return idx; // 0 = 12 o'clock
 }
 
-/** 在网格中寻找最近的可用位置（用于自动避障寻路） */
+/** Find the nearest usable position in the grid (for automatic obstacle-avoidance pathing) */
 export function findFreeSpot(grid, x, z, radius, feetY, height, maxR = 6) {
   if (pointFree(grid, x, z, radius, feetY, height)) return { x, z };
   for (let r = 1; r <= maxR; r += 1) {

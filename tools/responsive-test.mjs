@@ -1,16 +1,16 @@
 /* ============================================================
-   tools/responsive-test.mjs — 响应式验收测试
+   tools/responsive-test.mjs — responsive acceptance test
    ------------------------------------------------------------
-   1) 宽度扫描：1920 / 1440 / 1280 / 1024 / 768 / 480（模拟拖动窗口）
-   2) 缩放扫描：50% / 75% / 100% / 125% / 150%
-      （浏览器缩放 = CSS 视口变小 + devicePixelRatio 变大，按此模拟）
-   每个组合检查：
-     · 无横向滚动条
-     · 关键面板两两不重叠
-     · 文字不溢出容器、不出viewport
-     · 最小字号 ≥ 12px
-     · canvas backing store = CSS 尺寸 × DPR（清晰不变形）
-   用法： node tools/responsive-test.mjs
+   1) Width sweep: 1920 / 1440 / 1280 / 1024 / 768 / 480 (simulating window dragging)
+   2) Zoom sweep: 50% / 75% / 100% / 125% / 150%
+      (browser zoom = smaller CSS viewport + larger devicePixelRatio; simulated accordingly)
+   Each combination checks:
+     · No horizontal scrollbar
+     · Key panels do not overlap pairwise
+     · Text does not overflow its container or leave the viewport
+     · Minimum font size ≥ 12px
+     · canvas backing store = CSS size × DPR (sharp, undistorted)
+   Usage: node tools/responsive-test.mjs
    ============================================================ */
 import { Suite } from './harness.mjs';
 
@@ -22,17 +22,17 @@ const browser = await suite.launch({
 });
 const page = await suite.newPage();
 
-/* 布局审计必须在「动画已静止」的状态下测量。
-   否则 .log-item 的入场动画（logIn 从 translateX(14px) 起步）会让一个刚出现的
-   日志项在动画期间被 getBoundingClientRect() 判定为越界 —— 属于纯粹的时间竞态，
-   会让本套件间歇性变红（见 ui.css 的 prefers-reduced-motion 块）。
-   同时这也让「减少动态效果」这一真实用户配置下的布局得到覆盖。 */
+/* Layout audits must be measured with animations at rest.
+   Otherwise .log-item's entrance animation (logIn starts at translateX(14px)) makes a just-added
+   log item register as out of bounds while animating — a pure timing race that makes
+   this suite intermittently red (see the prefers-reduced-motion block in ui.css).
+   It also covers layout under the real user preference "reduce motion". */
 await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const failuresList = [];
 
-/* ---------------- 页面内检查脚本 ---------------- */
+/* ---------------- In-page check script ---------------- */
 const CHECK = `(() => {
   const out = { hScroll: [], overlaps: [], textOverflow: [], smallFont: [], canvases: [], offscreen: [] };
   const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
@@ -44,12 +44,12 @@ const CHECK = `(() => {
     return r.width > 0 && r.height > 0;
   };
 
-  /* 1. 横向滚动条 */
+  /* 1. Horizontal scrollbar */
   const de = document.documentElement, bd = document.body;
   if (de.scrollWidth > de.clientWidth + 1) out.hScroll.push('documentElement ' + de.scrollWidth + '>' + de.clientWidth);
   if (bd.scrollWidth > bd.clientWidth + 1) out.hScroll.push('body ' + bd.scrollWidth + '>' + bd.clientWidth);
 
-  /* 2. 关键面板两两重叠 */
+  /* 2. Pairwise overlap of key panels */
   const PANELS = ['#objective-panel','#compass-wrap','#status-panel','#mini-map','#squad-panel',
                   '#weapon-panel','#hint-bar','#log','#radio-feed','#hud-bottom-center','#cursor-hint'];
   const live = PANELS.map((s) => document.querySelector(s)).filter(vis);
@@ -57,22 +57,22 @@ const CHECK = `(() => {
   for (let i = 0; i < rects.length; i++) {
     for (let j = i + 1; j < rects.length; j++) {
       const a = rects[i], b = rects[j];
-      if (a.el.contains(b.el) || b.el.contains(a.el)) continue;   // 父子不算
+      if (a.el.contains(b.el) || b.el.contains(a.el)) continue;   // parent/child does not count
       const ox = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
       const oy = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
       if (ox > 2 && oy > 2) {
-        out.overlaps.push(a.sel + ' × ' + b.sel + ' 重叠 ' + Math.round(ox) + '×' + Math.round(oy) + 'px');
+        out.overlaps.push(a.sel + ' × ' + b.sel + ' overlap ' + Math.round(ox) + '×' + Math.round(oy) + 'px');
       }
     }
   }
 
-  /* 3. 文字溢出 + 4. 最小字号 + 5. 越界 */
+  /* 3. Text overflow + 4. Minimum font size + 5. Out of bounds */
   const textEls = document.querySelectorAll('body *');
   for (const el of textEls) {
     if (!vis(el)) continue;
     if (el.tagName === 'CANVAS' || el.tagName === 'SVG') continue;
     const cs = getComputedStyle(el);
-    // 直接含文本节点才判断
+    // Only evaluate elements with direct text nodes
     let hasText = false;
     for (const n of el.childNodes) if (n.nodeType === 3 && n.textContent.trim().length) hasText = true;
     if (!hasText) continue;
@@ -80,14 +80,14 @@ const CHECK = `(() => {
     if (fs < 11.9 && el.offsetParent !== null) {
       out.smallFont.push((el.id || el.className || el.tagName) + ' = ' + fs.toFixed(1) + 'px');
     }
-    // 只有这两处是「有意裁切」的次要信息流，其余任何裁切都算缺陷
+    // Only these two intentionally clip secondary information streams; any other clipping is a defect
     const intentionalClip = !!el.closest('#log, #radio-feed');
     if (!intentionalClip && el.scrollWidth > el.clientWidth + 2) {
       out.textOverflow.push((el.id || el.className || el.tagName) + ' ' + el.scrollWidth + '>' + el.clientWidth);
     }
     if (!intentionalClip && el.scrollHeight > el.clientHeight + 2 &&
         cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') {
-      out.textOverflow.push((el.id || el.className || el.tagName) + ' 纵向裁切 ' +
+      out.textOverflow.push((el.id || el.className || el.tagName) + ' vertical clip ' +
         el.scrollHeight + '>' + el.clientHeight);
     }
     const r = el.getBoundingClientRect();
@@ -96,7 +96,7 @@ const CHECK = `(() => {
     }
   }
 
-  /* 6. canvas 清晰度与比例 */
+  /* 6. Canvas sharpness and aspect ratio */
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   document.querySelectorAll('canvas').forEach((cv) => {
     if (!vis(cv)) return;
@@ -107,7 +107,7 @@ const CHECK = `(() => {
     const okRatio = Math.abs(cssRatio - bufRatio) / cssRatio < 0.02;
     if (!okW || !okH || !okRatio) {
       out.canvases.push((cv.id || 'canvas') + ' buf=' + cv.width + 'x' + cv.height +
-        ' 期望=' + ew + 'x' + eh + ' 比例 ' + cssRatio.toFixed(3) + '/' + bufRatio.toFixed(3));
+        ' expected=' + ew + 'x' + eh + ' ratio ' + cssRatio.toFixed(3) + '/' + bufRatio.toFixed(3));
     }
   });
   return out;
@@ -117,13 +117,13 @@ async function audit(label, viewport) {
   if (viewport) {
     const before = await page.evaluate(() => (window.__game ? window.__game.resizeCount : 0));
     await page.setViewport({ ...viewport, isMobile: false });
-    // 必须等页面真的处理完这次尺寸变化（ResizeObserver → resize()），
-    // 否则会在 canvas 还没重绘时误判为「不清晰」
+    // Must wait until the page has really processed this size change (ResizeObserver → resize()),
+    // or it will falsely report "blurry" before the canvas has redrawn
     try {
       await page.waitForFunction((n) => window.__game && window.__game.resizeCount > n,
         { timeout: 8000, polling: 100 }, before);
-    } catch (e) { /* 未进入游戏时没有 resizeCount，忽略 */ }
-    // 再等两帧，让 HUD 的 canvas 重绘完成
+    } catch (e) { /* no resizeCount before entering the game; ignore */ }
+    // Wait two more frames so the HUD canvases finish redrawing
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   }
   await wait(120);
@@ -137,32 +137,32 @@ async function audit(label, viewport) {
   if (!ok) {
     failuresList.push({ label, problems });
     problems.slice(0, 6).forEach((p) => console.log('    ' + p));
-    if (problems.length > 6) console.log(`    … 另有 ${problems.length - 6} 项`);
+    if (problems.length > 6) console.log(`    … ${problems.length - 6} more`);
   }
   return problems.length;
 }
 
-/* ============ 1. 宽度扫描（模拟拖动窗口） ============ */
+/* ============ 1. Width sweep (simulating window dragging) ============ */
 await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
 await page.goto('http://127.0.0.1:8202/?deploy=1&pos=0,-30', { waitUntil: 'load' });
 await wait(2600);
 
-console.log('\n===== A. 窗口宽度扫描（游戏中 HUD） =====');
+console.log('\n===== A. Window width sweep (in-game HUD) =====');
 for (const w of [1920, 1440, 1280, 1024, 900, 768, 600, 480]) {
-  await audit(`游戏中 ${w}×${Math.round(w * 0.62)}`, { width: w, height: Math.round(w * 0.62), deviceScaleFactor: 1 });
+  await audit(`in game ${w}×${Math.round(w * 0.62)}`, { width: w, height: Math.round(w * 0.62), deviceScaleFactor: 1 });
 }
 
-console.log('\n===== B. 浏览器缩放扫描（物理窗口 1440×900） =====');
+console.log('\n===== B. Browser zoom sweep (physical window 1440×900) =====');
 for (const z of [0.5, 0.75, 1, 1.25, 1.5]) {
-  await audit(`缩放 ${Math.round(z * 100)}%  → CSS ${Math.round(1440 / z)}×${Math.round(900 / z)} @ dpr ${z}`,
+  await audit(`zoom ${Math.round(z * 100)}%  → CSS ${Math.round(1440 / z)}×${Math.round(900 / z)} @ dpr ${z}`,
     { width: Math.round(1440 / z), height: Math.round(900 / z), deviceScaleFactor: z });
 }
 
-/* ============ 3. 菜单界面 ============ */
+/* ============ 3. Menu screens ============ */
 await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
 await wait(300);
-console.log('\n===== C. 菜单界面（标题 / 简报 / 配装 / 说明） =====');
-const SCREENS = [['title', '标题'], ['briefing', '行动简报'], ['loadout', '装备配置'], ['help', '操作说明']];
+console.log('\n===== C. Menu screens (title / briefing / loadout / help) =====');
+const SCREENS = [['title', 'Title'], ['briefing', 'Operation briefing'], ['loadout', 'Loadout'], ['help', 'How to Play']];
 for (const [screen, name] of SCREENS) {
   for (const w of [1920, 1440, 1024, 768, 480]) {
     await page.evaluate((s) => window.__game.screens.show(s), screen);
@@ -170,26 +170,26 @@ for (const [screen, name] of SCREENS) {
   }
 }
 
-/* 战果面板 + 暂停面板：这两屏字号最大，最容易溢出 */
-console.log('\n===== D. 战果 / 暂停面板 =====');
+/* Debrief + pause panels: these have the largest type and overflow most easily */
+console.log('\n===== D. Debrief / pause panels =====');
 for (const w of [1920, 1440, 1024, 768, 480]) {
   await page.evaluate(() => {
     window.__game.screens.showDebrief({
-      success: true, grade: 'A', comment: '流程干净、节奏克制。小队的推进与火力纪律都符合警备处的标准作业程序。',
+      success: true, grade: 'A', comment: 'Clean process and restrained tempo. The squad\'s movement and fire discipline met the Security Office standard operating procedure.',
       time: '7:24', shots: 61, accuracy: 38, blindShots: 3, detained: 3, killed: 1, escaped: 0,
       suspectTotal: 9, civSafe: 4, civLost: 0, civTotal: 4, orders: 11, squadDown: 0, gadgets: 2,
       objectives: { manifest: 'done', evidence: 'done', civilians: 'done', suspects: 'done', extract: 'done' },
       squad: [
-        { callsign: 'LEAD', role: '制式防弹背心', alive: true, hp: 96, maxHp: 120 },
-        { callsign: 'ARDEN-2', role: 'RIFLEMAN · 侦察', alive: true, hp: 118, maxHp: 130 },
-        { callsign: 'BRAM-3', role: 'RIFLEMAN · 火力', alive: true, hp: 74, maxHp: 130 },
-        { callsign: 'CIRA-4', role: 'BREACHER · 突击', alive: true, hp: 130, maxHp: 130 },
-        { callsign: 'DOV-5', role: 'MEDIC · 支援', alive: true, hp: 101, maxHp: 130 },
+        { callsign: 'LEAD', role: 'Standard Ballistic Vest', alive: true, hp: 96, maxHp: 120 },
+        { callsign: 'ARDEN-2', role: 'RIFLEMAN · Scout', alive: true, hp: 118, maxHp: 130 },
+        { callsign: 'BRAM-3', role: 'RIFLEMAN · Support', alive: true, hp: 74, maxHp: 130 },
+        { callsign: 'CIRA-4', role: 'BREACHER · Assault', alive: true, hp: 130, maxHp: 130 },
+        { callsign: 'DOV-5', role: 'MEDIC · Support', alive: true, hp: 101, maxHp: 130 },
       ],
     });
     window.__game.screens.show('debrief');
   });
-  await audit(`战果面板 ${w}px`, { width: w, height: Math.max(600, Math.round(w * 0.62)), deviceScaleFactor: 1 });
+  await audit(`debrief panel ${w}px`, { width: w, height: Math.max(600, Math.round(w * 0.62)), deviceScaleFactor: 1 });
 }
 
 await suite.finish();

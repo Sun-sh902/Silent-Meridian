@@ -1,624 +1,606 @@
-# 寂静子午线 · THE SILENT MERIDIAN
+# THE SILENT MERIDIAN
 
-> 战术警备模拟 · 行动 01「静默泊位」
-> 23:41，海雾封锁子午线港三号泊位。你带领一支四人警备小组进入仓区，
-> 处理武装嫌疑人、保护平民、找回货单、搜集调度室证据。
-> **先观察，再下令。**
+> Tactical security simulation · Operation 01 "SILENT BERTH"
+> 23:41. Sea fog has sealed Berth 3 at Meridian Port. You lead a four-person security team into the warehouse district to handle armed suspects, protect civilians, recover the cargo manifest, and gather evidence from the dispatch office.
+> **Observe first. Then give the order.**
 
-[![在线试玩](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E8%AF%95%E7%8E%A9-GitHub%20Pages-54d6c6?style=flat-square)](https://sun-sh902.github.io/Silent-Meridian/)
-[![测试](https://img.shields.io/badge/tests-11%2F11%20pass-54d6c6?style=flat-square)](#自检)
-[![许可证](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![依赖](https://img.shields.io/badge/runtime%20deps-three.js%20%E5%94%AF%E4%B8%80-brightgreen?style=flat-square)](#threejs-只有一份运行时)
+[![Play online](https://img.shields.io/badge/play%20online-GitHub%20Pages-54d6c6?style=flat-square)](https://sun-sh902.github.io/Silent-Meridian/)
+[![Tests](https://img.shields.io/badge/tests-11%2F11%20pass-54d6c6?style=flat-square)](#self-checks)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Dependencies](https://img.shields.io/badge/runtime%20deps-three.js%20only-brightgreen?style=flat-square)](#threejs-has-exactly-one-runtime)
 
-纯前端、离线可跑的第一人称战术模拟：**零运行时依赖**（Three.js 已本地内联），
-不请求任何网络资源，全部贴图与音效由 canvas / WebAudio 现场程序化生成。
-一条命令跑完 11 套真实 Chrome 验收测试。
+A purely client-side, offline-capable first-person tactical simulation: **zero runtime dependencies** (Three.js is vendored locally), no network requests of any kind, and every texture and sound generated procedurally at runtime with canvas / WebAudio.
+One command runs all 11 real-Chrome acceptance suites.
 
-[在线试玩](https://sun-sh902.github.io/Silent-Meridian/) ·
-[本地启动](#启动方式重要) ·
-[操作说明](#操作) ·
-[自检](#自检)
+[Play online](https://sun-sh902.github.io/Silent-Meridian/) ·
+[Run locally](#getting-started-important) ·
+[Controls](#controls) ·
+[Self-checks](#self-checks)
 
-<img src="docs/shots/04-yard.png" alt="港区行动：第一人称视角、HUD 任务清单、四人小队状态与指令栏" width="100%">
+<img src="docs/shots/04-yard.png" alt="Port operation: first-person view, HUD objective list, four-person squad status and command bar" width="100%">
 
 <details>
-<summary><b>更多截图</b>（主菜单 / 简报 / 配装 / 战术地图 / 战果）</summary>
+<summary><b>More screenshots</b> (main menu / briefing / loadout / tactical map / debrief)</summary>
 
-| 主菜单 | 行动简报 |
+| Main menu | Operation briefing |
 | --- | --- |
-| ![主菜单](docs/shots/01-title.png) | ![行动简报](docs/shots/02-briefing.png) |
+| ![Main menu](docs/shots/01-title.png) | ![Operation briefing](docs/shots/02-briefing.png) |
 
-| 装备配置 | 战术地图（Tab） |
+| Loadout | Tactical map (Tab) |
 | --- | --- |
-| ![装备配置](docs/shots/03-loadout.png) | ![战术地图](docs/shots/05-tacmap.png) |
+| ![Loadout](docs/shots/03-loadout.png) | ![Tactical map](docs/shots/05-tacmap.png) |
 
-![战果结算](docs/shots/06-debrief.png)
+![Debrief](docs/shots/06-debrief.png)
 
-全部截图由 `node tools/readme-shots.mjs` 真实运行游戏后自动拍摄，非手绘示意图。
+Every screenshot is captured by actually running the game via `node tools/readme-shots.mjs` — none are hand-drawn mockups.
 
 </details>
 
-### 这是什么
+### What this is
 
-一个**可完成的任务关卡**，而不是技术演示：进入港区、观察识别、下达小队指令、
-拘押嫌疑人、护送平民、取回情报并撤出，最后给出评级与逐项统计。
+A **completable mission level**, not a tech demo: enter the port, observe and identify, issue squad orders, detain suspects, escort civilians, recover intelligence, and extract — then receive an action rating and a per-item breakdown.
 
-几条把它和其他练手项目区分开的约束：
+A few constraints that set it apart from other practice projects:
 
-| 约束 | 落地方式 |
+| Constraint | How it is met |
 | --- | --- |
-| 离线可跑 | 无 `fetch` / `Worker` / 动态 `import()` / CDN；Three.js 本地内联 |
-| 视觉资产零外部文件 | 贴图、标识、天空、水面全部程序化生成（`src/textures.js`） |
-| 音频零外部文件 | WebAudio 合成枪声、回声、耳鸣（`src/audio.js`） |
-| 可验证 | 11 套 puppeteer 套件跑真实 Chrome，页面异常计入失败 |
-| 手感可回归 | 参数集中在 `src/feel.js`，基线对比能测出行为漂移 |
+| Runs offline | No `fetch` / `Worker` / dynamic `import()` / CDN; Three.js is vendored locally |
+| Zero external visual assets | Textures, signage, sky and water are all generated procedurally (`src/textures.js`) |
+| Zero external audio assets | WebAudio synthesizes gunshots, echoes and tinnitus (`src/audio.js`) |
+| Verifiable | 11 Puppeteer suites run real Chrome; any page error counts as a failure |
+| Feel can be regression-tested | Parameters live in `src/feel.js`; baseline diffs catch behavioral drift |
 
 ---
 
-## 启动方式（重要）
+## Getting started (important)
 
-### 方式 A：本地服务器（推荐，`index.html` 的完整开发模式）
+### Option A: Local server (recommended; the full development mode for `index.html`)
 
-`index.html` 与 `src/*.js` 是 **ES module**。浏览器在 `file://` 下会以 CORS 策略
-拦截整张模块图（`Access to script at 'file://…/src/main.js' from origin 'null'
-has been blocked by CORS policy`），**一行 JS 都不会执行**，于是页面有样式但所有按钮都点不动。
-因此必须通过 HTTP 打开：
+`index.html` and `src/*.js` are **ES modules**. Under `file://`, the browser blocks the entire module graph with its CORS policy (`Access to script at 'file://…/src/main.js' from origin 'null' has been blocked by CORS policy`), so **not a single line of JS runs** — the page is styled, but every button is dead.
+You therefore have to open it over HTTP:
 
 ```bash
 git clone https://github.com/Sun-sh902/silent-meridian.git
 cd silent-meridian
-npm start                  # 起本地服务并打印地址，零依赖（只用 Node 内置模块）
+npm start                  # starts a local server and prints the address; zero deps (Node built-ins only)
 ```
 
-等价的手工方式（不想装 Node 也行）：
+The equivalent manual route (if you don't want to install Node):
 
 ```bash
 python3 -m http.server 8123
 ```
 
-> macOS 上也可以直接双击 `start.command`，它会切到自身所在目录再起服务。
+> On macOS you can also double-click `start.command`; it changes into its own directory before starting the server.
 
-然后访问：
+Then open:
 
 ```
 http://localhost:8123/
 ```
 
-（端口可换：`npm start -- --port 9000`，或命令里改，地址跟着改。）
+(You can change the port: `npm start -- --port 9000`, or edit the command — the address follows.)
 
-### 方式 B：不用服务器，直接双击
+### Option B: No server, just double-click
 
-双击这两个文件中的任意一个，都不需要本地服务，`file://` 下可正常运行：
+Double-click either of these files; neither needs a local server and both run fine under `file://`:
 
-| 文件 | 说明 |
+| File | Notes |
 | --- | --- |
-| `dist/silent-meridian.html` | 单文件构建：JS / CSS / 贴图全部内联，只有一个文件 |
-| `index.html` | 会自动检测 `file://` 并改加载 `dist/silent-meridian.js`（**经典脚本**，不受模块 CORS 限制） |
+| `dist/silent-meridian.html` | Single-file build: JS / CSS / textures all inlined, one file only |
+| `index.html` | Detects `file://` and switches to loading `dist/silent-meridian.js` (a **classic script**, exempt from module CORS) |
 
-> 方式 B 依赖 `dist/` 已经存在且**不是陈旧的**。若你改过 `src/` 或 `dist/` 被删掉，先执行一次
-> `node build.mjs` 重新生成。若 `dist/silent-meridian.js` 缺失，页面会弹出提示直接告诉你这条命令。
+> Option B relies on `dist/` already existing and **not being stale**. If you have changed `src/` or deleted `dist/`, run `node build.mjs` once to regenerate it. If `dist/silent-meridian.js` is missing, the page shows a prompt telling you that exact command.
 >
-> ⚠️ **改完 `src/` 一定要重新构建再验证方式 B。** 陈旧包和新鲜包的版本号是一样的，肉眼分辨不出来；
-> `npm test` 会先跑 `tools/check-dist.mjs` 用内容哈希把它揪出来（见下文「自检」）。
+> ⚠️ **After changing `src/`, always rebuild before verifying Option B.** A stale bundle and a fresh bundle carry the same version number, so the difference is invisible to the eye; `npm test` first runs `tools/check-dist.mjs`, which catches it via content hash (see "Self-checks" below).
 
-> 本仓库**直接提交了 `dist/`**（约 1.4 MB）：clone 下来就能双击开玩，不必先装依赖再构建。
-> 代价是改了 `src/` 必须重新构建并提交，否则仓库里的包会过期 ——
-> `npm test` 的第一项 `check-dist` 就是用内容哈希专治这个（见下文「自检」）。
+> This repository **commits `dist/` directly** (about 1.4 MB): clone it and you can double-click and play without installing dependencies or building first.
+> The trade-off is that any change to `src/` must be rebuilt and committed, or the bundle in the repo goes stale —
+> the first item in `npm test`, `check-dist`, uses content hashes specifically to catch that (see "Self-checks" below).
 
-### 重新打包
+### Rebuilding
 
 ```bash
 node build.mjs
-# → dist/silent-meridian.js   （经典脚本，file:// 可加载；头部带 vX.Y.Z + 内容哈希标记）
-# → dist/silent-meridian.html （单文件）
-# → dist/build-stamp.json     （本次构建的输入指纹，供 check-dist 判定陈旧）
+# → dist/silent-meridian.js   (classic script, loadable under file://; header carries vX.Y.Z + content hash)
+# → dist/silent-meridian.html (single file)
+# → dist/build-stamp.json     (input fingerprint for this build; lets check-dist detect staleness)
 ```
 
-### 为什么会有两种加载方式
+### Why there are two loading paths
 
-| 打开方式 | 加载的东西 | 能否运行 |
+| How it is opened | What gets loaded | Does it run? |
 | --- | --- | --- |
-| `http://localhost:8123/` | `src/main.js`（`type="module"` + import map + 19 个源文件共 51 条 `import`） | ✅ |
-| `file:///…/index.html` | 引导脚本检测到 `file:`，改加载 `dist/silent-meridian.js`（IIFE 经典脚本） | ✅ |
-| `file:///…/index.html`（缺 dist） | 加载失败 → 页面弹出命令提示 + 调试面板标红 | ⚠️ 有明确提示，不再是“静默无反应” |
+| `http://localhost:8123/` | `src/main.js` (`type="module"` + import map + 19 source files, 51 `import` statements) | ✅ |
+| `file:///…/index.html` | The bootstrap script detects `file:`, then loads `dist/silent-meridian.js` (IIFE classic script) instead | ✅ |
+| `file:///…/index.html` (no dist) | Load fails → page shows the command prompt + debug panel turns red | ⚠️ Explicit warning, no longer "silently does nothing" |
 
-代码里没有任何 `fetch` / `Worker` / 动态 `import()` / 网络资源，贴图全部由 canvas 现场生成，
-所以打包成经典脚本后可以在 `file://` 下完整运行。
-
----
-
-## 调试面板（判断脚本到底跑没跑）
-
-按 **`D`** 唤出（主菜单 / 简报 / 配装 / 战果 / **暂停菜单**）；**行动中 `D` 属于游戏（右平移）**，此时请按 **`~`**（反引号）开关面板。
-面板固定显示：
-
-* **脚本已执行** —— 引导脚本执行时间（引导脚本是内联经典脚本，永远会跑）
-* **打开方式** —— `http:` / `file:` 与实际采用的加载器
-* **主脚本** —— ✓ 已加载 / ✗ 加载失败
-* **动作处理器** —— ✓ 已注册（列出全部动作）/ ✗ 未注册（说明游戏脚本没运行）
-* **页面按钮** —— 当前 DOM 里 `[data-action]` 的数量
-* **指针锁定** —— 锁定时点按钮需先按 `Alt`
-* **最近一次点击事件** —— 时间 / 标签 / 动作名，用来确认点击是否真的送达
+There is no `fetch` / `Worker` / dynamic `import()` / network resource anywhere in the code, and every texture is generated in-browser by canvas, so once bundled as a classic script it runs fully under `file://`.
 
 ---
 
-## 操作
+## Debug panel (finding out whether the script actually ran)
 
-| 键位 | 作用 |
-| --- | --- |
-| `W` `A` `S` `D` | 移动 |
-| `Shift` / `Ctrl` | 疾行 / 潜行 |
-| 鼠标 | 环视（点击画面锁定指针） |
-| 右键 | 举枪瞄准（观察效率提升，散布减小） |
-| 左键 | 射击 |
-| `R` | 换弹 |
-| `G` | 投掷战术器材（按住蓄力） |
-| `F` | 战术灯开关（照得远，但也更容易被发现） |
-| `E` | 互动：取回物品 / 护送平民 / 拘押嫌疑人 / 急救队员 |
-| 空格（按住） | 战术暂停：时间减慢至 10%，用于观察与下令 |
-| `1` | 编队跟随 FOLLOW |
-| `2` | 原地待命 HOLD |
-| `3` | 移动清场 CLEAR（推进至准星落点） |
-| `4` | 归队 REGROUP |
-| `Tab` | 战术地图（左键放置小队航点 / 右键放置注意力标记） |
-| `Alt` | 释放鼠标（光标模式）：可点击 HUD 指令按钮；点击画面恢复视角 |
-| `Esc` | 暂停菜单 |
-| `M` | 静音 |
+Press **`D`** to bring it up (main menu / briefing / loadout / debrief / **pause menu**). **During an operation `D` belongs to the game (strafe right)**, so use **`~`** (backtick) to toggle the panel there.
+The panel always shows:
 
-> 界面会随窗口尺寸与浏览器缩放自动重排，不会挤压重叠；按 `D` 可唤出调试面板查看当前视口信息
-> （仅限主菜单 / 简报 / 配装 / 战果 / 暂停菜单；**行动中 `D` 是右平移**，此时请按 `~`）。
-> 调试面板里的「构建标记」一栏会显示当前包的版本与内容哈希，版本与页面不符时会标红。
+* **Script executed** — when the bootstrap script ran (the bootstrap is an inline classic script, so it always runs)
+* **How it was opened** — `http:` / `file:` and the loader actually used
+* **Main script** — ✓ loaded / ✗ failed to load
+* **Action handlers** — ✓ registered (lists every action) / ✗ not registered (meaning the game script never ran)
+* **Page buttons** — the number of `[data-action]` elements currently in the DOM
+* **Pointer lock** — while locked, press `Alt` before clicking a button
+* **Most recent click event** — time / tag / action name, to confirm clicks actually arrive
 
 ---
 
-## 手感参数中枢与调参面板（第 1 批）
+## Controls
 
-所有手感数字集中在 **`src/feel.js`**，逻辑代码逐帧读取该对象，不在构造期缓存 —— 改一个数立即生效。
-
-| 分组 | 内容 |
+| Key | Action |
 | --- | --- |
-| `move` | 走/跑/蹲/举枪四档速度、耐力、加速/减速/滑行时长、斜向归一化、转向阻尼 |
-| `jump` | 跳跃参数（本轮**全禁用**，值全为 0；已预留 `onLanding` 接口位） |
-| `camera` | 默认/疾跑/ADS 视场角、灵敏度与 ADS 灵敏度倍率、头部晃动幅度与**开关**、相机侧倾 |
-| `weapon` | 后坐上跳、回落速度、水平抖动、后坐→瞄准转化速率、规律弹道表开关 |
-| `spread` | 基础/移动/疾跑/连发扩散、扩散收缩速度、后坐与压制对扩散的贡献 |
-| `feedback` | hitmarker 时长、受击顿帧、伤害数字、屏幕震动强度与衰减、枪口闪光时长、弹壳抛出速度 |
-| `reload` | 切枪时长、ADS 进出速率、换弹时长缩放、换弹可打断 |
-| `viewmodel` | 第一人称武器的起伏/拖曳/后挫（惯性载体，按约定准星保持 1:1 无延迟） |
+| `W` `A` `S` `D` | Move |
+| `Shift` / `Ctrl` | Sprint / sneak |
+| Mouse | Look around (click the view to lock the pointer) |
+| Right mouse | Aim down sights (faster observation, tighter spread) |
+| Left mouse | Fire |
+| `R` | Reload |
+| `G` | Throw tactical gadget (hold to charge) |
+| `F` | Tactical light toggle (sees farther, but easier to spot) |
+| `E` | Interact: recover item / escort civilian / detain suspect / treat teammate |
+| Space (hold) | Tactical pause: time slows to 10%, for observing and issuing orders |
+| `1` | Formation follow — FOLLOW |
+| `2` | Hold position — HOLD |
+| `3` | Move and clear — CLEAR (advance to the crosshair point) |
+| `4` | Regroup — REGROUP |
+| `Tab` | Tactical map (left-click places a squad waypoint / right-click places an attention marker) |
+| `Alt` | Release the mouse (cursor mode): click HUD command buttons; click the view to restore look control |
+| `Esc` | Pause menu |
+| `M` | Mute |
 
-> `data.js` 里的 `TUNING`（AI/识别参数）**按约定保持原样未动**，不属于本文件。
+> The interface reflows automatically with window size and browser zoom, with no squeezing or overlap. Press `D` to open the debug panel and inspect the current viewport info
+> (main menu / briefing / loadout / debrief / pause menu only; **during an operation `D` is strafe right**, so use `~`).
+> The debug panel's "build tag" row shows the current bundle's version and content hash, and turns red if the version does not match the page.
 
-### 调参面板
+---
 
-| 键 | 作用 |
+## Feel tuning hub and tuning panel (batch 1)
+
+Every feel number lives in **`src/feel.js`**; logic code reads that object every frame and never caches it at construction time — change a value and it takes effect immediately.
+
+| Group | Contents |
 | --- | --- |
-| `P` | 完整面板：底部抽屉式（保留上方约 1/3 画面），**释放指针、时间保持 100%、WASD 仍可移动** |
-| `O` | 只读悬浮层：**不释放指针**，显示四条实时曲线与数值 |
-| `[` `]` | 悬浮模式下 减小 / 增大 当前选中参数 |
-| `,` `.` | 悬浮模式下 切换选中参数 |
+| `move` | Walk / run / crouch / ADS speeds, stamina, acceleration / deceleration / glide durations, diagonal normalization, turn damping |
+| `jump` | Jump parameters (**fully disabled** this round, all values 0; the `onLanding` hook is reserved) |
+| `camera` | Default / sprint / ADS field of view, sensitivity and ADS sensitivity multiplier, head-bob amplitude and **toggle**, camera roll |
+| `weapon` | Vertical recoil kick, recovery speed, horizontal jitter, recoil→aim conversion rate, deterministic recoil pattern toggle |
+| `spread` | Base / moving / sprinting / burst spread, spread recovery speed, recoil and suppression contributions to spread |
+| `feedback` | Hitmarker duration, hit-stop, damage numbers, screen-shake strength and decay, muzzle-flash duration, shell-ejection speed |
+| `reload` | Weapon-switch duration, ADS in/out rates, reload duration scale, interruptible reload |
+| `viewmodel` | First-person weapon bob / drag / recoil kick (inertial carrier; by convention the crosshair stays 1:1 with no lag) |
 
-面板内提供：**导出 JSON** + **一键复制**、**3 个预设槽**（槽 A 固定为「原始（改动前）」用于 A/B 对比）、
-**冻结敌人 AI**、**无敌**、**头部晃动开关**、**重置曲线**。
-标有 `未接线` 徽标的参数属于第 2/3 批实现，当前拖动不改变行为（避免误导）。
+> `TUNING` in `data.js` (AI / identification parameters) **is deliberately left untouched** by convention and does not belong to this file.
 
-四条曲线来自 `feel.js` 的 `telemetry` 环形缓冲（预分配，零 GC）：速度、加速度、后坐、扩散。
+### Tuning panel
 
-### 手感回归基线（证明第 1 批零行为变化）
+| Key | Action |
+| --- | --- |
+| `P` | Full panel: bottom drawer (keeps roughly the top third of the view), **releases the pointer, keeps time at 100%, and WASD still moves** |
+| `O` | Read-only overlay: **does not release the pointer**; shows four live curves and values |
+| `[` `]` | In overlay mode, decrease / increase the selected parameter |
+| `,` `.` | In overlay mode, cycle the selected parameter |
+
+The panel provides **Export JSON** + **Copy to clipboard**, **3 preset slots** (slot A is fixed to "Original (pre-change)" for A/B comparison), **Freeze enemy AI**, **Invincible**, **head-bob toggle**, and **Reset curves**.
+Parameters tagged `not wired` belong to batches 2/3; dragging them currently changes nothing (to avoid misleading you).
+
+The four curves come from the `feel.js` `telemetry` ring buffer (preallocated, zero GC): speed, acceleration, recoil, spread.
+
+### Feel regression baseline (proving batch 1 changes no behavior)
 
 ```bash
 node tools/feel-baseline.mjs compare tools/feel-baseline.json
 ```
 
-以 **1/60s 固定步长**驱动 `game.advance()`（`?test=1` 冻结 rAF），屏蔽帧率抖动与渲染差异，
-因此结果逐位可复现。比对项覆盖：四档稳态速度与 FOV、起步/松手斜坡、相机侧倾与头部起伏、
-连发扩散首末值、后坐逐发累积与回落、换弹/切枪/ADS 时长、震动包络、枪口闪光时长。
+Drives `game.advance()` at a **fixed 1/60 s timestep** (`?test=1` freezes rAF), masking frame-rate jitter and rendering differences, so results are bit-for-bit reproducible. The comparison covers: steady-state speed and FOV in all four stances, acceleration / release ramps, camera roll and head bob, first and last burst-spread values, per-shot recoil accumulation and recovery, reload / weapon-switch / ADS durations, the shake envelope, and muzzle-flash duration.
 
-> 基线运行需在同一台机器上；不同 GPU/浏览器版本不影响该脚本（它只跑模拟，不依赖渲染）。
+> Baseline runs must happen on the same machine; a different GPU or browser version does not affect this script (it only runs the simulation and does not depend on rendering).
 
-### 已修复：射速翻倍与致盲时长砍半
+### Fixed: doubled fire rate and halved blind duration
 
-`player.update()` 先调用 `updateCommon(dt)`（其中已有一次 `fireCd -= dt`），随后又单独减了一次，
-使 `fireCd` 每帧递减 2×dt：
+`player.update()` first calls `updateCommon(dt)` (which already does `fireCd -= dt`), then decremented it again on its own, so `fireCd` fell by 2×dt per frame:
 
-* 标称 640rpm 的 MR-4 实测每 3 帧一发（≈1200rpm）—— **已修**，现为每 6 帧一发；
-* 同一个 bug 还让 `blind` 也被递减两次，闪光弹致盲时长被砍半（2.5~7s 只剩 1.25~3.5s）—— **已修**。
+* The MR-4, rated at 640 rpm, measured one shot every 3 frames (≈1200 rpm) — **fixed**, now one shot every 6 frames;
+* The same bug decremented `blind` twice as well, halving flashbang blind duration (2.5–7 s became 1.25–3.5 s) — **fixed**.
 
-修复后基线改用新值：`spread.shots` 从 30 变为 **15**（90 帧 @1/60s 固定步长）。
-理论值 16 发（1.5s × 640rpm ÷ 60）；实测 15 发是因为射击间隔被量化到整帧：
-640rpm ⇒ 5.625 帧，向上取整为 6 帧 ⇒ 有效射速 600rpm。
-这是逐帧递减的固有量化误差，且**随刷新率变化**（144Hz 下为 617rpm）。
-若要精确对齐标称射速，应把 `this.fireCd = rate` 改成把余量结转的 `this.fireCd += rate`，
-属于独立议题，尚未改动。
+After the fix the baseline uses the new values: `spread.shots` went from 30 to **15** (90 frames at a fixed 1/60 s timestep).
+The theoretical value is 16 shots (1.5 s × 640 rpm ÷ 60); the measured 15 comes from the shot interval being quantized to whole frames:
+640 rpm ⇒ 5.625 frames, rounded up to 6 frames ⇒ effective 600 rpm.
+This is the inherent quantization error of per-frame decrementing, and it **varies with refresh rate** (617 rpm at 144 Hz).
+To align exactly with the rated rate, change `this.fireCd = rate` to `this.fireCd += rate` so the remainder carries over; that is a separate issue and has not been changed yet.
 
-> 改动 `feel.js` 或任何影响手感的代码后，记得重新采样基线：
+> After changing `feel.js` or anything else that affects feel, remember to resample the baseline:
 > `node tools/feel-baseline.mjs capture tools/feel-baseline.json`
 
-## 响应式与缩放
+## Responsive layout and scaling
 
-* **字体**：统一走 `--fs-*` 令牌，全部写成 `max(Nrem, 12px)`，**任何情况下不小于 12px**。
-* **尺寸**：宽高用 `clamp()` / `rem` / `vmin`，间距用 `--pad-*`；根字号 `clamp(15px,…,18px)` 随视口温和缩放。
-* **布局**：HUD 是 `grid`（三行 × 三列），所有面板参与布局并靠断点重排；
-  只有「全屏特效层」和「准星集群」保留绝对定位 —— 后者必须锁定视口正中才能与瞄准射线一致。
-* **断点**：`≥1920` / `≤1439` / `≤1023` / `≤767` / `≤480`，另有 `≤760px`、`≤620px`、`≤520px`、`≤440px` 的**矮窗口压缩档**。
-  窄屏下优先隐藏次要元素（小地图、无线电、提示条、罗盘）而不是压缩文字。
-* **Canvas**：用 `ResizeObserver` 监听容器、`matchMedia('(resolution: Ndppx)')` 监听 DPR 变化，
-  backing store 恒等于 `CSS 尺寸 × devicePixelRatio`（上限 2），浏览器缩放后不模糊、不变形。
-* **防溢出**：`html/body/#app/#hud` 全部 `overflow:hidden`，不产生横向滚动条。
+* **Typography**: everything goes through `--fs-*` tokens, all written as `max(Nrem, 12px)` — **never smaller than 12 px** under any circumstances.
+* **Sizing**: width and height use `clamp()` / `rem` / `vmin`, spacing uses `--pad-*`; the root font size `clamp(15px,…,18px)` scales gently with the viewport.
+* **Layout**: the HUD is a `grid` (three rows × three columns); every panel participates in layout and reflows at breakpoints.
+  Only the "full-screen effect layers" and the "crosshair cluster" stay absolutely positioned — the latter must be pinned to the exact viewport center to match the aim ray.
+* **Breakpoints**: `≥1920` / `≤1439` / `≤1023` / `≤767` / `≤480`, plus **short-window compression tiers** at `≤760px`, `≤620px`, `≤520px`, `≤440px`.
+  On narrow screens, secondary elements (minimap, radio, hint bar, compass) are hidden before text is compressed.
+* **Canvas**: `ResizeObserver` watches the container and `matchMedia('(resolution: Ndppx)')` watches DPR changes, so the backing store always equals `CSS size × devicePixelRatio` (capped at 2) — no blurring or distortion after browser zoom.
+* **Overflow prevention**: `html/body/#app/#hud` are all `overflow:hidden`, so no horizontal scrollbar appears.
 
-### 响应式验收测试
+### Responsive acceptance test
 
 ```bash
 node tools/responsive-test.mjs
 ```
 
-分四段扫描，共 **38 项审计**：
+Four scan segments, **38 audits** in total:
 
-* A 段：8 档宽度（1920 / 1440 / 1280 / 1024 / 900 / 768 / 600 / 480）
-* B 段：5 档浏览器缩放（50% / 75% / 100% / 125% / 150%，物理窗口 1440×900）
-* C 段：4 个界面（标题 / 简报 / 配装 / 说明）× 5 档宽度
-* D 段：战果面板 × 5 档宽度
+* Segment A: 8 widths (1920 / 1440 / 1280 / 1024 / 900 / 768 / 600 / 480)
+* Segment B: 5 browser zoom levels (50% / 75% / 100% / 125% / 150%, physical window 1440×900)
+* Segment C: 4 screens (title / briefing / loadout / help) × 5 widths
+* Segment D: debrief panel × 5 widths
 
-逐项断言：
-无横向滚动条、关键面板两两不重叠、文字不溢出/不被裁切、字号 ≥ 12px、
-canvas 的 backing store 与 `CSS 尺寸 × DPR` 一致且宽高比不变。
+Per-item assertions:
+no horizontal scrollbar, no pairwise overlap of key panels, no text overflow or clipping, font size ≥ 12 px, and canvas backing store equal to `CSS size × DPR` with unchanged aspect ratio.
 
-> **为什么需要 Alt？** 行动中浏览器处于指针锁定状态，所有鼠标点击都会被投递给 3D 画面，
-> HUD 上的按钮收不到点击。按 `Alt` 释放指针后即可用鼠标正常点击指令按钮，
-> 此时时间降速到 30% 供你从容操作；点击画面任意位置即可回到鼠标视角。
-> 指令按钮的键盘快捷键 `1` `2` `3` `4` 在任何状态下都可用。
+> **Why is Alt needed?** During an operation the browser is in pointer lock, so every mouse click is delivered to the 3D view
+> and the HUD buttons receive nothing. Press `Alt` to release the pointer, then click the command buttons normally;
+> time drops to 30% so you can act deliberately. Click anywhere in the view to return to mouse look.
+> The command buttons' keyboard shortcuts `1` `2` `3` `4` work in any state.
 
 ---
 
-## 核心机制
+## Core mechanics
 
-### 友军伤害与目标识别
+### Friendly fire and target identification
 
-* **友军伤害已关闭**：主角与四名队友同属蓝方，子弹会**直接穿过**友军而不产生伤害
-  （伤害入口另有一层兜底拦截）。穿过队友后依然能命中后方的敌人。
-* **平民仍会被误伤** —— 这是任务失败条件，交战规则没有被削弱。
-* 准星对准队友时，目标卡显示其**呼号与专长**，而不是 `UNKNOWN CONTACT`。
+* **Friendly fire is off**: the player and the four teammates are all on the blue team, and bullets **pass straight through** friendlies without causing damage
+  (there is an additional backstop at the damage entry point). Shots still hit enemies behind a teammate.
+* **Civilians can still be hit by mistake** — that is a mission-failure condition; the rules of engagement have not been softened.
+* When the crosshair is on a teammate, the target card shows their **callsign and specialty** instead of `UNKNOWN CONTACT`.
 
-### 战术地图配色
+### Tactical map colors
 
-| 标记 | 含义 |
+| Marker | Meaning |
 | --- | --- |
-| 🔵 蓝色箭头 | 主角与队友（主角带白色描边便于辨认） |
-| 🟠 橙色圆点 | 已识别的敌人（投降/被拘押显示为空心圈） |
-| 🟡 黄色圆点 | 事件：枪声 / 警讯 / 爆炸 / 情报回收 / 伤亡 / 发现平民 |
-| 🟢 绿色方块 | 平民 |
-| 🔶 琥珀菱形 | 任务点 |
-| ⚪ 灰色 `?` | 未识别接触（保留「先观察再下令」的核心机制） |
+| 🔵 Blue arrow | Player and teammates (the player has a white outline for easy identification) |
+| 🟠 Orange dot | Identified enemy (surrendered / detained shown as a hollow ring) |
+| 🟡 Yellow dot | Event: gunfire / alarm / explosion / intel recovery / casualty / civilian found |
+| 🟢 Green square | Civilian |
+| 🔶 Amber diamond | Objective point |
+| ⚪ Grey `?` | Unidentified contact (preserving the core "observe first, then order" mechanic) |
 
-事件点保留约 2 分钟后淡出，最近 15 秒内会显示文字标签。
+Event dots fade after about 2 minutes and show a text label for the most recent 15 seconds.
 
-### 两张地图的坐标约定（已修正）
+### Coordinate conventions for the two maps (corrected)
 
-| | 小地图 `#minimap` | 战术地图 `#tacmap-canvas` |
+| | Minimap `#minimap` | Tactical map `#tacmap-canvas` |
 | --- | --- | --- |
-| 模式 | **玩家朝向朝上**（随转向旋转） | **北朝上固定**（世界固定） |
-| 变换 | 平移(−玩家) → 绕玩家旋转 **+yaw** → 缩放 k → 平移到画布中心 | 平移(−bounds) → 等比缩放 → 居中平移 |
-| 旋转中心 | **玩家自身位置**（不是画布原点） | 不旋转 |
-| 角度 | 全部弧度；每帧由绝对 `p.yaw` 重算，无累加器 | 同上 |
+| Mode | **Player faces up** (rotates with heading) | **North up, fixed** (world-fixed) |
+| Transform | Translate(−player) → rotate around player by **+yaw** → scale k → translate to canvas center | Translate(−bounds) → uniform scale → center |
+| Rotation center | **The player's own position** (not the canvas origin) | No rotation |
+| Angles | All radians; recomputed every frame from absolute `p.yaw`, no accumulator | Same |
 
-> ⚠️ **本项目 yaw 的符号约定**：`player.look()` 里是 `yaw -= dx * sens`，
-> 所以**鼠标右转 → yaw 减小**，左转 → yaw 增大。这与「yaw 增加 = 右转」的直觉相反，
-> 修改地图朝向相关代码时务必注意。
+> ⚠️ **This project's sign convention for yaw**: `player.look()` uses `yaw -= dx * sens`,
+> so **turning the mouse right → yaw decreases**, turning left → yaw increases. This is the opposite of the intuitive "increasing yaw = turning right";
+> keep it in mind when changing map-orientation code.
 
-### `window.__mapDebug` 调试接口
+### `window.__mapDebug` debug interface
 
 ```js
 __mapDebug.mode              // 'minimap=player-up(rotating) / tacmap=north-up(fixed)'
-__mapDebug.player            // { x, y, yaw }   ← y 即世界坐标的 z
-__mapDebug.yawRad / yawDeg   // 当前朝向
+__mapDebug.player            // { x, y, yaw }   ← y is the world z coordinate
+__mapDebug.yawRad / yawDeg   // current heading
 __mapDebug.buildings         // [{ name, x, y }]
-__mapDebug.worldToMap(x, z)  // 世界 → 小地图像素（也接受 {x,z}，旋转、玩家朝上）
-__mapDebug.worldToMapTac(x, z) // 世界 → 战术地图像素（北朝上）
-__mapDebug.mapToWorld(mx, my)  // 小地图像素 → 世界
+__mapDebug.worldToMap(x, z)  // world → minimap pixels (also accepts {x,z}; rotated, player-up)
+__mapDebug.worldToMapTac(x, z) // world → tactical map pixels (north-up)
+__mapDebug.mapToWorld(mx, my)  // minimap pixels → world
 __mapDebug.labels / labelsMini // { stats:{total,drawn,rejected,offscreen}, items:[…] }
 ```
 
-### 地图标签规则
+### Map label rules
 
-* 文字**始终水平**绘制，不参与旋转；随旋转的是锚点，不是字形。
-* 字号固定为设计像素，因 `render()` 已 `setTransform(dpr,…)`，HiDPI 下不缩水、不被地图缩放拉伸。
-* **碰撞避让**：候选标签按「优先级 + 与玩家距离」排序后逐个占位，重叠者直接隐藏（`stats.rejected` 可查）。
-* 超出可视范围直接跳过；面积大、距离近的优先。
-* 一律加深色半透明底衬，保证亮/暗背景下都可读。
+* Text is **always drawn horizontally** and never rotates; the anchor point rotates, not the glyphs.
+* Font size is fixed in design pixels; because `render()` already does `setTransform(dpr,…)`, labels do not shrink on HiDPI and are not stretched by map zoom.
+* **Collision avoidance**: candidate labels are sorted by "priority + distance to player" and placed one by one; overlapping ones are hidden outright (`stats.rejected` reports them).
+* Anything outside the visible area is skipped; large nearby areas take priority.
+* Every label gets a dark translucent backing so it stays readable on both bright and dark backgrounds.
 
-### 先观察，再下令
+### Observe first, then give the order
 
-海雾中无法从轮廓分辨平民与持械者。把准星压在目标上，屏幕中央会出现目标卡与
-识别进度条：
+In the sea fog you cannot tell a civilian from a gunman by silhouette. Put the crosshair on a target and a target card plus an identification progress bar appears in the center of the screen:
 
-* `UNKNOWN CONTACT` — 只知道那里有活动；
-* `人员接触 · 身份不明` — 已发现，未确认；
-* `武装嫌疑人` / `平民 · 非战斗人员` — 识别完成。
+* `UNKNOWN CONTACT` — you only know something is moving there;
+* `PERSONNEL CONTACT · UNIDENTIFIED` — detected, not confirmed;
+* `ARMED SUSPECT` / `CIVILIAN · NON-COMBATANT` — identification complete.
 
-识别完成前开火会记为「盲射」，直接扣减行动评分；误伤平民则立即判定行动失败。
-按住空格进入战术暂停，可以在不冒风险的情况下完成识别并下达指令。
+Firing before identification is logged as a "blind shot" and directly deducts from the operation score; hitting a civilian immediately fails the operation.
+Hold Space to enter tactical pause and complete identification and issue orders without taking risks.
 
-### 三条小队指令
+### Three squad orders
 
-* 编队跟随 — 四人按楔形队形随队长推进，自动绕开障碍。
-* 原地待命 — 小队停下并看守当前朝向；朝向取自下令瞬间队长的视线方向。
-* 移动清场 — 小队分成两个小组交替掩护（bounding overwatch）推进至航点，
-  一组跃进时另一组停下掩护。
+* Formation follow — the four move with the team leader in wedge formation, automatically routing around obstacles.
+* Hold position — the squad stops and watches its current facing; facing is taken from the team leader's view direction at the moment the order is given.
+* Move and clear — the squad splits into two fire teams and advances to the waypoint by bounding overwatch:
+  one team bounds while the other stops to cover.
 
-小队默认遵守火力纪律：只有收到「移动清场」、或遭遇射击后才会开火，其余情况只做报告。
-直接看向某名队员时下令，指令只会下给该队员。
+By default the squad observes fire discipline: it fires only after receiving "move and clear" or after taking fire; otherwise it only reports.
+If you issue an order while looking directly at a squad member, the order goes only to that member.
 
-### 战术地图（Tab）
+### Tactical map (Tab)
 
-俯视港区平面图，显示小队、已识别目标、任务点与最后一次目击位置。
-地图上左键放置航点即下达「移动清场」，右键放置注意力标记，双击清除。
+A top-down plan of the port showing the squad, identified targets, objective points, and the last known sighting.
+Left-click places a waypoint and issues "move and clear"; right-click places an attention marker; double-click clears them.
 
 ---
 
-## 任务目标
+## Mission objectives
 
-| 目标 | 说明 |
+| Objective | Description |
 | --- | --- |
-| 找回货运货单 | 三号仓（BAY 3）办公室内的文件 |
-| 搜集调度室证据 | 港区调度楼内的监控与登记记录 |
-| 保护平民 | 找到夜班工人并护送（`E`）至南门集结点 |
-| 处理武装嫌疑人（次要） | 拘押优于击毙：劝降后靠近按 `E` 拘押 |
-| 撤出港区 | 三项主要目标完成后，南门装甲车开放 |
+| Recover the cargo manifest | Documents in the BAY 3 office |
+| Gather evidence from the dispatch office | Surveillance and registration records in the port dispatch building |
+| Protect civilians | Find the night-shift workers and escort them (`E`) to the south gate rally point |
+| Handle armed suspects (secondary) | Detention is better than killing: persuade them to surrender, then approach and press `E` to detain |
+| Extract from the port | Once the three primary objectives are complete, the south gate armored vehicle opens up |
 
 ---
 
-## 工程结构
+## Engineering structure
 
 ```
-index.html            页面骨架与全部界面 DOM
-styles/ui.css         界面样式（HUD / 简报 / 配装 / 地图 / 战果）
-src/main.js           引导与调试参数
-src/game.js           任务编排：指令系统、识别、目标流程、主循环
-src/world.js          原创港区布局、光照、海雾、环境贴图
-src/actors.js         人物模型、小队 / 嫌疑人 / 平民 AI
-src/player.js         队长控制器
-src/combat.js         弹道、命中、投掷物、特效
-src/nav.js            导航网格与 A* 寻路
-src/geom.js           数学、空间网格、视线、碰撞
-src/viewmodel.js      第一人称武器与姿态
-src/hud.js            平视显示
-src/tacmap.js         战术地图
-src/screens.js        主菜单 / 简报 / 配装 / 战果面板
-src/textures.js       程序化贴图与虚构标识
-src/audio.js          WebAudio 程序化音效
-src/feel.js           手感参数中枢（唯一真源）+ 实时遥测环形缓冲
-src/tuning.js         调参面板（P / O 唤出）
-src/canvasfit.js      canvas 尺寸与 DPR 适配（ResizeObserver + matchMedia）
-src/maplabel.js       地图标签避让（对象池 + 宽度缓存）
-vendor/three.module.js  Three.js 运行时（本地内联，离线可用）
-vendor/three.core.js    Three.js 运行时核心（被上一行 import）
-tools/                11 套 puppeteer 验收套件 + 性能/手感基线 + 截图脚本
-docs/shots/           README 截图（由 tools/readme-shots.mjs 生成）
-dist/                 构建产物（已提交：双击即玩）
+index.html            Page skeleton and all interface DOM
+styles/ui.css         Interface styles (HUD / briefing / loadout / map / debrief)
+src/main.js           Bootstrap and debug parameters
+src/game.js           Mission orchestration: order system, identification, objective flow, main loop
+src/world.js          Original port layout, lighting, sea fog, environment map
+src/actors.js         Character models, squad / suspect / civilian AI
+src/player.js         Team leader controller
+src/combat.js         Ballistics, hit resolution, projectiles, effects
+src/nav.js            Navigation grid and A* pathfinding
+src/geom.js           Math, spatial grid, line of sight, collision
+src/viewmodel.js      First-person weapon and pose
+src/hud.js            Heads-up display
+src/tacmap.js         Tactical map
+src/screens.js        Main menu / briefing / loadout / debrief panels
+src/textures.js       Procedural textures and fictional signage
+src/audio.js          WebAudio procedural sound effects
+src/feel.js           Feel parameter hub (single source of truth) + live telemetry ring buffer
+src/tuning.js         Tuning panel (summoned with P / O)
+src/canvasfit.js      Canvas sizing and DPR adaptation (ResizeObserver + matchMedia)
+src/maplabel.js       Map label avoidance (object pool + width cache)
+vendor/three.module.js  Three.js runtime (vendored locally, works offline)
+vendor/three.core.js    Three.js runtime core (imported by the line above)
+tools/                11 Puppeteer acceptance suites + perf/feel baselines + screenshot script
+docs/shots/           README screenshots (generated by tools/readme-shots.mjs)
+dist/                 Build output (committed: double-click and play)
 ```
 
-### 技术栈
+### Tech stack
 
-没有框架，没有打包器以外的工具链，没有 CI 服务依赖：
+No framework, no toolchain beyond the bundler, no CI service dependency:
 
-| 层 | 用什么 | 说明 |
+| Layer | What is used | Notes |
 | --- | --- | --- |
-| 渲染 | Three.js `0.180.0`（本地 vendored） | 唯一运行时依赖；`src/` 7 个文件裸导入 `three` |
-| 界面 | 原生 DOM + 一份 `styles/ui.css` | 无框架、无虚拟 DOM；HUD 更新做过逐帧开销优化 |
-| 逻辑 | 原生 ES module | 19 个源文件、51 条 `import`，浏览器直接跑，无编译步骤 |
-| 资产 | 无 | 贴图/音效全部程序化生成，仓库里没有一个美术资源文件 |
-| 构建 | esbuild（仅 devDependency） | 只用于产出 `file://` 可用的 `dist/*` |
-| 测试 | puppeteer-core + 本机 Chrome | 11 套件；页面异常、`console.error`、资源失败一律判 FAIL |
+| Rendering | Three.js `0.180.0` (vendored locally) | The only runtime dependency; 7 files under `src/` bare-import `three` |
+| Interface | Native DOM + one `styles/ui.css` | No framework, no virtual DOM; HUD updates are optimized for per-frame cost |
+| Logic | Native ES modules | 19 source files, 51 `import` statements, runs directly in the browser with no compile step |
+| Assets | None | Textures and sounds are all generated procedurally; the repository contains not one art asset file |
+| Build | esbuild (devDependency only) | Used solely to produce `file://`-compatible `dist/*` |
+| Testing | puppeteer-core + local Chrome | 11 suites; page errors, `console.error` and resource failures are always FAIL |
 
-### Three.js 只有一份运行时
+### Three.js has exactly one runtime
 
-`src/` 里 7 个文件都用裸标识符 `import ... from 'three'`，它有两套解析路径：
+All 7 files under `src/` use the bare specifier `import ... from 'three'`, which has two resolution paths:
 
-| 路径 | 解析到 | 用在哪 |
+| Path | Resolves to | Used by |
 | --- | --- | --- |
-| 开发（http） | `index.html` 的 import map → `vendor/three.module.js` | `npm run dev` 式浏览 |
-| 打包（file://） | esbuild `--alias:three=./vendor/three.module.js` | `dist/*` |
+| Development (http) | `index.html`'s import map → `vendor/three.module.js` | `npm run dev`-style browsing |
+| Bundle (file://) | esbuild `--alias:three=./vendor/three.module.js` | `dist/*` |
 
-`build.mjs` 显式加了 alias，把打包路径也钉到 `vendor/`，**两份拷贝因此不可能分叉**。
-`package.json` 里的 `three` 也固定为精确版本 `0.180.0`（原来是 `^0.180.0`），
-仅供编辑器/工具链解析类型，不参与打包。
+`build.mjs` adds the alias explicitly, pinning the bundle path to `vendor/` as well, **so the two copies cannot diverge**.
+`three` in `package.json` is also pinned to the exact version `0.180.0` (it used to be `^0.180.0`),
+purely for editor/toolchain type resolution; it does not participate in bundling.
 
-## 调试参数
+## Debug parameters
 
-在地址后追加查询参数便于验证：
+Append query parameters to the URL for easier verification:
 
-`?deploy=1` 直接进入行动 · `&pos=x,z` 指定出生点 · `&yaw=弧度` 指定朝向
-`&alarm=1` 立即触发警讯 · `&dummy=8` 在正前方放置静止目标
-`&tacmap=1` 打开战术地图 · `&screen=briefing|loadout` 打开指定界面
-`&debrief=1` 查看样例战果面板 · `&novm=1` 隐藏第一人称武器
+`?deploy=1` drop straight into the operation · `&pos=x,z` set the spawn point · `&yaw=radians` set the heading
+`&alarm=1` raise the alarm immediately · `&dummy=8` place stationary targets directly ahead
+`&tacmap=1` open the tactical map · `&screen=briefing|loadout` open the specified screen
+`&debrief=1` view a sample debrief panel · `&novm=1` hide the first-person weapon
 
-## 自检
+## Self-checks
 
-### 一条命令跑完全部验收
+### Run every acceptance suite with one command
 
 ```bash
-npm test            # = node tools/run-all.mjs，11 个套件，逐套件汇总退出码
+npm test            # = node tools/run-all.mjs; 11 suites, per-suite exit codes summarized
 ```
 
-套件一览（`npm run test:<名字>` 可单独跑）：
+Suite overview (`npm run test:<name>` runs one individually):
 
-| 套件 | 作用 |
+| Suite | Purpose |
 | --- | --- |
-| `test:dist` | dist/ 陈旧检测（内容哈希，不需要浏览器） |
-| `test:click` | 三种打开方式下的全界面点击链路 |
-| `test:fixes` | 备战静音 / 目标卡 / 友军伤害 / 地图配色 |
-| `test:p0` | 四个 P0 缺陷的复现与回归（含 `?deploy=1&test=1` 固定步长驱动） |
-| `test:p1` | 射速与致盲时长、斜向速度、AI 掩体死循环、帧率无关性、任务定时器、识别时间基准、AI 点射 |
-| `test:map` | 小地图 / 战术地图坐标与标记 |
-| `test:tuning` | 调参面板：滑块与 `FEEL_SCHEMA` 逐项对账、导出/复制路径 |
-| `test:responsive` | 8 档宽度 × 5 档缩放 × 各界面布局审计 |
-| `test:audio` | 20 次闪光弹压力测试与控制组对比 |
-| `test:feel` | 手感基线逐位比对 |
-| `test:selftest` | 注入未捕获异常，自证测试骨架真的会变红 |
+| `test:dist` | dist/ staleness check (content hash, no browser needed) |
+| `test:click` | Full click paths across all interfaces under three ways of opening the game |
+| `test:fixes` | Loadout silence / target card / friendly fire / map colors |
+| `test:p0` | Reproduction and regression of four P0 defects (including `?deploy=1&test=1` fixed-timestep driving) |
+| `test:p1` | Fire rate and blind duration, diagonal speed, AI cover deadlock, frame-rate independence, mission timers, identification time base, AI burst fire |
+| `test:map` | Minimap / tactical map coordinates and markers |
+| `test:tuning` | Tuning panel: sliders reconciled item-by-item with `FEEL_SCHEMA`, export/copy paths |
+| `test:responsive` | 8 widths × 5 zoom levels × per-screen layout audit |
+| `test:audio` | 20-flashbang stress test compared against a control group |
+| `test:feel` | Bit-for-bit feel-baseline comparison |
+| `test:selftest` | Injects an uncaught exception to prove the test harness really does turn red |
 
-### dist/ 陈旧检测（不需要浏览器，秒级）
+### dist/ staleness check (no browser needed, takes seconds)
 
 ```bash
 node tools/check-dist.mjs
 ```
 
-`dist/` 已随仓库提交，而 `index.html` 在 `file://` 下加载的正是 `dist/silent-meridian.js`。
-**改完 `src/` 忘记重新构建时，双击运行的人会继续跑旧包，而旧包与新鲜包的版本号完全相同，从外部看不出任何差别。**
-本脚本用输入文件的内容哈希（`src/**/*.js`、`index.html`、`styles/ui.css`，记录在 `dist/build-stamp.json`）
-与当前值逐项比对，任何一个文件在构建后被改动都会判 FAIL 并列出文件名：
+`dist/` is committed with the repository, and `index.html` loads exactly `dist/silent-meridian.js` under `file://`.
+**If you change `src/` and forget to rebuild, people who double-click will keep running the old bundle — and the old and fresh bundles have identical version numbers, so nothing is visible from the outside.**
+This script compares the content hashes of the input files (`src/**/*.js`, `index.html`, `styles/ui.css`, recorded in `dist/build-stamp.json`) against their current values, item by item; any file changed after the build makes it FAIL and lists the filename:
 
 ```
-[FAIL] dist 不是陈旧的（src / index.html / ui.css 未在构建后被改动）
-       — 已改动: src/game.js —— 请执行： node build.mjs
+[FAIL] dist is not stale (src / index.html / ui.css unchanged since the build)  —  changed: src/game.js — Run: node build.mjs
 ```
 
-用内容哈希而不是 mtime，因此不受 `git clone` / 检出顺序影响。
-运行时另有一层兜底：调试面板的「构建标记」会显示包内嵌的版本与哈希，
-与页面版本不一致时标红（同版本下的内容陈旧运行时无法判断，由本脚本负责）。
+It uses content hashes rather than mtime, so `git clone` / checkout order cannot affect it.
+There is another runtime backstop: the debug panel's "build tag" shows the version and hash embedded in the bundle,
+and turns red when they disagree with the page version (same-version content staleness cannot be detected at runtime; this script covers that case).
 
-### 性能与资源探测（可比较的量化基线）
+### Performance and resource probe (comparable quantitative baseline)
 
 ```bash
-npm run perf                              # 打印当前指标
-npm run perf:save                         # 存为 tools/perf-baseline.json
-npm run perf:diff                         # 与基准比较，明显变差则退出码非 0
+npm run perf                              # print current metrics
+npm run perf:save                         # save as tools/perf-baseline.json
+npm run perf:diff                         # compare with the baseline; non-zero exit if clearly worse
 ```
 
-输出每帧 DOM 变更数、布局读取次数、逻辑耗时，以及反复部署时的 GPU 资源增量。
-它**不是**通过/失败型测试，而是一把尺子 —— 用来证明优化真的有效，而不是凭感觉。
+It reports per-frame DOM mutations, layout reads, logic time, and GPU resource growth across repeated deployments.
+It is **not** a pass/fail test but a ruler — proof that an optimization really worked, rather than a feeling.
 
-判定每项时会带上「哪个方向更好」：FBO 删除数是越多越好，其余越少越好；
-逻辑耗时在 swiftshader 下采样帧数少、噪声大，因此只作参考、不计入失败。
-部署增量用「相邻两次部署的差值」衡量稳态泄漏，避免把首次部署的一次性初始化误算成每次泄漏。
+Each item is judged with a "which direction is better": more FBO deletions is better, fewer of everything else is better;
+logic time samples few frames under swiftshader and is noisy, so it is informational only and does not count toward failure.
+Deployment growth uses the "difference between adjacent deployments" to measure steady-state leaks, avoiding counting one-time first-deployment initialization as a per-deployment leak.
 
-### 逻辑吞吐基准（低方差，适合 A/B）
+### Logic throughput benchmark (low variance, suitable for A/B)
 
 ```bash
-npm run bench                             # 打印结果
-npm run bench:save                        # 存为 tools/perf-bench.json
-npm run bench:diff                        # 与基准比较，明显变差则退出码非 0
+npm run bench                             # print results
+npm run bench:save                        # save as tools/perf-bench.json
+npm run bench:diff                        # compare with the baseline; non-zero exit if clearly worse
 ```
 
-`perf-probe` 量的是「稳态成本」，`perf-bench` 量的是「纯逻辑吞吐 + draw call」。
-后者用 `?test=1` 冻结 rAF、以固定步长手动驱动 `advance()`，因此几乎不受软件光栅化
-噪声影响 —— 这是能做出可信 A/B 对比的关键。每个场景跑 7 轮取中位数。
+`perf-probe` measures "steady-state cost"; `perf-bench` measures "pure logic throughput + draw calls".
+The latter freezes rAF with `?test=1` and drives `advance()` manually at a fixed timestep, so it is almost immune to software-rasterization
+noise — that is the key to a trustworthy A/B comparison. Each scenario runs 7 rounds and takes the median.
 
-> 两个容易踩的坑（工具里已处理并注释）：
-> 1. `Game.loop()` 每帧调用**两次** `renderer.render()`（主场景 + viewmodel 私有场景），
->    而 `info.autoReset` 为 true —— 第二次会把计数清零，直接读 `info.render.calls`
->    得到的是「武器」的十几个 draw call，完全测不到关卡。必须包一层 render，
->    只在主场景那次之后取样。
-> 2. 逻辑基准会把演员传送到 999（远超 `far=420`），若紧接着测渲染，
->    整个场景都被视锥裁掉，只能得到空场景的数字。必须先重新部署再扫描视角。
+> Two easy traps (already handled and commented in the tools):
+> 1. `Game.loop()` calls `renderer.render()` **twice** per frame (main scene + viewmodel's private scene),
+>    and `info.autoReset` is true — the second call zeroes the counters, so reading `info.render.calls` directly
+>    gives you the dozen-odd draw calls of the "weapon" and completely misses the level. You must wrap render
+>    and sample only after the main-scene call.
+> 2. The logic benchmark teleports actors to 999 (far beyond `far=420`); if you then measure rendering straight away,
+>    the entire scene is frustum-culled and you get empty-scene numbers only. You must redeploy first, then scan view angles.
 
-> 本项目 P2/P3 轮的实测结果（同一台机器，HEAD 前后对比，900 步固定步长取 7 轮中位数）：
+> Measured results from this project's P2/P3 rounds (same machine, HEAD before/after, 900 fixed steps, median of 7 rounds):
 >
-> 方法：基准与优化**交错各跑两遍**、各取最优，以抵消机器漂移。
-> 加固前同代码跨进程重跑有约 ±15% 抖动，加「预热一轮 + 取 9 轮最小值」后收敛到约 ±5%。
+> Method: run the baseline and the optimization **twice each, interleaved**, and take the best of each to cancel machine drift.
+> Before hardening, rerunning the same code in a fresh process varied by about ±15%; with "one warm-up round + best of 9 rounds" it converged to about ±5%.
 >
-> | 场景 | 优化前 | 优化后 | 变化 |
+> | Scenario | Before | After | Change |
 > | --- | --- | --- | --- |
-> | 逻辑 idle-follow | 118.3 ms | **28.6 ms** | **-75.8%** |
-> | 逻辑 clear-order | 121.5 ms | **30.6 ms** | **-74.8%** |
-> | 逻辑 engage-9（9 人交火） | 141.3 ms | **52.2 ms** | **-63.1%** |
-> | 逻辑 squad-firing | 118.0 ms | **35.8 ms** | **-69.7%** |
-> | **其中 HUD 单独计时** | **100.7 ms** | **21.2 ms** | **-78.9%** |
-> | 主场景 draw call（中位） | 119 | **98** | -17.6% |
-> | 主场景 draw call（峰值） | 275 | **254** | -7.6% |
+> | Logic idle-follow | 118.3 ms | **28.6 ms** | **-75.8%** |
+> | Logic clear-order | 121.5 ms | **30.6 ms** | **-74.8%** |
+> | Logic engage-9 (9-person firefight) | 141.3 ms | **52.2 ms** | **-63.1%** |
+> | Logic squad-firing | 118.0 ms | **35.8 ms** | **-69.7%** |
+> | **of which HUD timed separately** | **100.7 ms** | **21.2 ms** | **-78.9%** |
+> | Main-scene draw calls (median) | 119 | **98** | -17.6% |
+> | Main-scene draw calls (peak) | 275 | **254** | -7.6% |
 > | geometries | 492 | **425** | -13.6% |
-> | triangles（中位） | 11992 | 12996 | +8.4%（与 draw call 权衡，仅参考） |
+> | triangles (median) | 11992 | 12996 | +8.4% (trade-off with draw calls; informational only) |
 >
-> 其中约 8~10 个百分点来自**移除雨幕**：5200 条雨丝粒子与自写着色器、
-> 整整一层全屏 CSS 雨幕合成层、以及闪电环境光都不再需要。
-> | 每帧 DOM 变更（perf-probe） | 27.3 | **2.6** | -90% |
-> | 每帧布局读取（perf-probe） | 55.2 | **3** | -95% |
-> | 每次重新部署的纹理净增 | +8 | **0** | 10 次部署恒为 37 张 |
-> | 每次重新部署的 geometry 净增 | +24.6 | **0** | 398~423 波动，无增长趋势 |
+> About 8–10 percentage points of that came from **removing the rain curtain**: 5,200 rain-streak particles with a hand-written shader,
+> an entire full-screen CSS rain compositing layer, and lightning ambient light are no longer needed.
+> | Per-frame DOM mutations (perf-probe) | 27.3 | **2.6** | -90% |
+> | Per-frame layout reads (perf-probe) | 55.2 | **3** | -95% |
+> | Net texture growth per redeployment | +8 | **0** | constant 37 across 10 deployments |
+> | Net geometry growth per redeployment | +24.6 | **0** | fluctuates 398–423, no upward trend |
 >
-> **归因**：优化前 `hud-update-only`（100.7ms）占了 `idle-follow`（118.3ms）的约 **85%** ——
-> 每帧的 HUD DOM/布局开销是当时最大的一笔逻辑成本。这一项被压到 21.2ms 后，
-> 剩下的约 7ms 才是真正的游戏逻辑。
+> **Attribution**: before optimization, `hud-update-only` (100.7 ms) accounted for about **85%** of `idle-follow` (118.3 ms) —
+> per-frame HUD DOM/layout cost was by far the largest logic cost at the time. Once that was squeezed down to 21.2 ms,
+> the remaining ~7 ms was the actual game logic.
 >
-> **三角形数上升是有意接受**：把 46 个水洼合并成 1 个网格后失去逐对象视锥裁剪，
-> 最多 644 个三角形每帧都提交；换来的是最多 46 次透明 draw call 降到 1 次。
-> draw call 是稀缺资源（每次都有状态校验与 uniform 上传开销），
-> 而每帧几百个三角形对任何 GPU 都可以忽略。
+> **The rise in triangles is an accepted trade-off**: merging 46 puddles into 1 mesh gives up per-object frustum culling,
+> so up to 644 triangles are submitted every frame; in exchange, up to 46 transparent draw calls drop to 1.
+> Draw calls are the scarce resource (each carries state validation and uniform upload overhead),
+> while a few hundred triangles per frame is negligible for any GPU.
 
-### 点击链路自检
+### Click-path self-check
 
-用真实 Chrome（非预览面板）跑一遍所有界面按钮的点击链路，覆盖三种打开方式：
+Runs every interface button's click path in real Chrome (not the preview pane), covering three ways of opening the game:
 
-* `http://localhost` 服务器模式
-* `file://` 直接打开 `dist/silent-meridian.html`（单文件）
-* `file://` 直接打开 `index.html`（自动降级到经典脚本）
+* `http://localhost` server mode
+* `file://` opening `dist/silent-meridian.html` directly (single file)
+* `file://` opening `index.html` directly (automatic fallback to the classic script)
 
 ```bash
 node build.mjs && node tools/click-test.mjs
 ```
 
-逐项校验：菜单导航、配装点选、部署、HUD 指令按钮、战术地图落点、暂停/继续/中止、
-调试面板内容，并用 `elementFromPoint` 检查按钮是否真的命中自身（被遮挡直接判 FAIL）。
+Verifies item by item: menu navigation, loadout selection, deployment, HUD command buttons, tactical-map placement, pause/resume/abort,
+debug-panel contents, and uses `elementFromPoint` to check that a button really receives its own click (anything occluded is an immediate FAIL).
 
-> Chrome 可执行文件不再硬编码：优先取环境变量 `CHROME_PATH`，否则在 macOS / Linux / Windows
-> 的常见路径中依次探测；全部找不到时以退出码 2 结束并打印已尝试的路径（不会抛栈）。
-> 页面未捕获异常、`console.error`、资源加载失败一律计入失败并影响退出码 ——
-> `tools/selftest-red.mjs` 会「注入一个未捕获异常」自证这条链路真的会让测试变红。
+> The Chrome executable is no longer hardcoded: it prefers the `CHROME_PATH` environment variable, otherwise probes the usual
+> macOS / Linux / Windows locations in order; if none is found it exits with code 2 and prints the paths it tried (no stack trace).
+> Page uncaught exceptions, `console.error`, and resource-load failures all count as failures and affect the exit code —
+> `tools/selftest-red.mjs` injects an uncaught exception to prove this path really does turn the tests red.
 
-### 音频 / 闪光弹压力测试
+### Audio / flashbang stress test
 
 ```bash
 node tools/audio-stress.mjs
 ```
 
-连续触发 20 次闪光弹，并与"什么都不投掷"的对照组比较，校验：
+Triggers 20 flashbangs in a row and compares against a control group that "throws nothing", verifying:
 
-* 引爆次数**恰好 20**（防止"每帧重复引爆"这类缺陷回归）
-* 主线程单帧逻辑耗时（不含渲染）平均 < 16ms、峰值 < 50ms
-* `AudioContext` 数量恒为 1，音频节点用完后回落
-* 投掷物 / DOM 日志 / 白屏层全部回收，无未捕获异常
+* exactly **20** detonations (preventing regressions such as "detonating again every frame")
+* main-thread per-frame logic time (excluding rendering) averaging < 16 ms, peaking < 50 ms
+* the `AudioContext` count stays at 1, and audio nodes fall back after use
+* projectiles / DOM log / whiteout layer are all reclaimed, with no uncaught exceptions
 
-### README 截图
+### README screenshots
 
 ```bash
-node tools/readme-shots.mjs        # → docs/shots/*.png（会用本机 Chrome 真跑一遍界面）
+node tools/readme-shots.mjs        # → docs/shots/*.png (really drives the interface in local Chrome)
 ```
 
-按用户路径依次驱动主菜单 → 简报 → 配装 → 部署 → 战术地图 → 战果并逐屏截图；
-每步都断言目标界面确实显示了，界面没出现就以非零退出码失败（避免拍出「空白截图」还当成功）。
-它**不在 `npm test` 里**：这是人工流程，不该在每次回归时重写仓库文件。
+Follows the user path through main menu → briefing → loadout → deployment → tactical map → debrief, taking a screenshot at each screen;
+each step asserts that the target screen actually appeared, failing with a non-zero exit code if it did not (so it cannot produce a "blank screenshot" and call it success).
+It is **not part of `npm test`**: this is a manual workflow and should not rewrite repository files on every regression run.
 
 ---
 
-## 音频实现约束（为什么不会再卡死/爆音）
+## Audio implementation constraints (why it can no longer freeze or crackle)
 
-| 约束 | 实现位置 |
+| Constraint | Implementation |
 | --- | --- |
-| 全局唯一 `AudioContext`（模块级单例，绝不 new 第二个） | `src/audio.js` `acquireContext()` |
-| 每个 voice `stop()` 后在 `onended` 里 `disconnect()` 并释放引用 | `src/audio.js` `_v()` |
-| 同时在发声的 voice 上限 40，超限丢弃，避免雪崩 | `src/audio.js` `_budget()` |
-| 同名音效最小间隔（闪光弹 150ms），防止叠加成啸叫 | `src/audio.js` `_gate()` |
-| 白噪声缓冲：只生成一次 + 16384 采样分块异步生成 | `src/audio.js` `_buildNoiseBuffer()` |
-| 所有增益变化 ≥5ms ramp，禁止瞬时赋值（含静音） | `src/audio.js` `_env()` / `setMuted()` |
-| 输出链末端 `DynamicsCompressor` 限幅 + 输出增益 0.8 | `src/audio.js` `init()` |
-| 耳鸣音 2.2kHz + 低通柔化 + 音量 0.028（戴耳机不刺耳） | `src/audio.js` `flashbang()` |
-| 致盲白屏只用 CSS opacity 过渡，零逐像素操作 | `src/hud.js` `flash()` |
+| One global `AudioContext` (module-level singleton, never `new` a second one) | `src/audio.js` `acquireContext()` |
+| Each voice `disconnect()`s in `onended` after `stop()` and releases its references | `src/audio.js` `_v()` |
+| At most 40 simultaneous voices; excess is dropped to avoid an avalanche | `src/audio.js` `_budget()` |
+| Minimum interval per sound (150 ms for flashbangs) prevents stacking into a screech | `src/audio.js` `_gate()` |
+| White-noise buffer: generated once + asynchronously in 16,384-sample chunks | `src/audio.js` `_buildNoiseBuffer()` |
+| Every gain change ramps over ≥5 ms; instantaneous assignment is forbidden (including mute) | `src/audio.js` `_env()` / `setMuted()` |
+| End of the output chain uses a `DynamicsCompressor` limiter + output gain 0.8 | `src/audio.js` `init()` |
+| Tinnitus tone at 2.2 kHz + low-pass softening + volume 0.028 (not piercing on headphones) | `src/audio.js` `flashbang()` |
+| The blinding whiteout uses only a CSS opacity transition, with zero per-pixel work | `src/hud.js` `flash()` |
 
 ---
 
-## 开源与部署
+## Open source and deployment
 
-* **许可证**：[MIT](LICENSE) —— 可自由使用、修改、分发、商用，保留版权声明即可。
-* **在线试玩**：GitHub Pages 直接以仓库根目录为站点（`index.html` 是入口，
-  `src/` 按 ES module 正常加载，无需任何构建步骤）。
-* **纯静态**：整站没有一个后端接口，可以整包丢到任意静态托管（Vercel / Netlify / Cloudflare
-  Pages / 对象存储）上；`dist/silent-meridian.html` 单文件版尤其适合直接分发。
-* **想改代码**：`npm install` → 起本地服务 → 改 `src/` → `npm test` → `node build.mjs`。
-  改了行为就顺手补一条断言，`tools/` 里的套件是照着「页面异常也算失败」写的。
+* **License**: [MIT](LICENSE) — free to use, modify, distribute and use commercially, provided the copyright notice is retained.
+* **Play online**: GitHub Pages serves the repository root directly (`index.html` is the entry point;
+  `src/` loads normally as ES modules, with no build step required).
+* **Purely static**: there is not a single backend endpoint; the whole site can be dropped onto any static host (Vercel / Netlify / Cloudflare
+  Pages / object storage); the single-file `dist/silent-meridian.html` is especially convenient for direct distribution.
+* **Want to modify the code**: `npm install` → start the local server → edit `src/` → `npm test` → `node build.mjs`.
+  If you change behavior, add an assertion while you are at it; the suites in `tools/` are written around "page errors count as failures".
 
-### 参与与反馈
+### Contributing and feedback
 
-Issue / PR 都欢迎。提交前请确保 `npm test` 11/11 通过，并且在 `src/` 有改动时
-重新执行过 `node build.mjs`（否则 `check-dist` 会红）。
+Issues / PRs are welcome. Before submitting, make sure `npm test` passes 11/11 and that you have
+rerun `node build.mjs` whenever `src/` changed (otherwise `check-dist` turns red).
 
 ---
 
-本作中的港区、机构、品牌、船名与人员均为虚构创作，与任何现实企业、机构或个人无关。
+The port district, organizations, brands, ship names and personnel in this work are fictional creations, unrelated to any real company, institution or person.

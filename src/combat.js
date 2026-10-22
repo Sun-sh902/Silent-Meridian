@@ -1,12 +1,12 @@
 /* ============================================================
-   combat.js — 弹道、命中判定、投掷物与视觉特效
+   combat.js — ballistics, hit resolution, projectiles and visual effects
    ============================================================ */
 import * as THREE from 'three';
 import { feel } from './feel.js';
 
-/* ---------------- 射线 vs AABB ---------------- */
-/* 阵营划分：蓝=主角+队友，红=嫌疑人，绿=平民。
-   友军伤害已关闭：同阵营的子弹直接穿过，不判定命中。 */
+/* ---------------- Ray vs AABB ---------------- */
+/* Team assignment: blue = player + teammates, red = suspects, green = civilians.
+   Friendly fire is off: same-team bullets pass straight through without a hit check. */
 export function teamOf(a) {
   if (!a) return null;
   if (a.kind === 'player' || a.kind === 'squad') return 'blue';
@@ -17,10 +17,10 @@ export function sameTeam(a, b) {
   return !!a && !!b && teamOf(a) === teamOf(b);
 }
 
-/* 射线 vs AABB（标量版）。
-   此前用 4 个临时数组（o/d/lo/hi）做逐轴循环，每次调用分配 4 个数组；
-   本函数在每次射击、每颗弹丸、每个候选盒子上都会被调用，
-   一次霰弹枪射击（9 颗弹丸）就能产生上千次数组分配。这里全部改成局部标量。 */
+/* Ray vs AABB (scalar version).
+   This used to use 4 temporary arrays (o/d/lo/hi) in a per-axis loop, allocating 4 arrays per call;
+   the function runs for every shot, every pellet and every candidate box,
+   so one shotgun blast (9 pellets) could produce over a thousand array allocations. Everything is local scalars now. */
 export function rayAABB(ox, oy, oz, dx, dy, dz, b) {
   let tmin = 0, tmax = Infinity;
   let t1, t2, tmp;
@@ -54,14 +54,14 @@ export function rayAABB(ox, oy, oz, dx, dy, dz, b) {
   return tmin;
 }
 
-/* 复用缓冲：castRay 每次调用都会用到，改成模块级单例，避免每次分配 */
+/* Reused buffer: used on every castRay call; changed to a module-level singleton to avoid allocating each time */
 const _rayScratch = [];
 const _rayBox = {
   min: { x: 0, y: 0, z: 0 },
   max: { x: 0, y: 0, z: 0 },
 };
 
-/** 沿射线找最近的墙体与角色 */
+/** Find the nearest wall and actor along a ray */
 export function castRay(game, ox, oy, oz, dx, dy, dz, maxDist, shooter) {
   const grid = game.world.grid;
   let wallT = null, wallBox = null;
@@ -84,7 +84,7 @@ export function castRay(game, ox, oy, oz, dx, dy, dz, maxDist, shooter) {
   let best = null;
   for (const a of game.actors) {
     if (a === shooter || !a.alive) continue;
-    if (shooter && sameTeam(shooter, a)) continue;   // 友军伤害关闭：直接穿过
+    if (shooter && sameTeam(shooter, a)) continue;   // friendly fire off: pass straight through
     const b = _rayBox;
     const r = a.radius;
     b.min.x = a.pos.x - r; b.max.x = a.pos.x + r;
@@ -111,11 +111,11 @@ export function castRay(game, ox, oy, oz, dx, dy, dz, maxDist, shooter) {
   return { dist: maxDist, point: { x: ox + dx * maxDist, y: oy + dy * maxDist, z: oz + dz * maxDist }, miss: true };
 }
 
-/* 复用缓冲：投掷物落地检测与闪光弹视线采样，避免每次新建数组 */
+/* Reused buffers: projectile landing checks and flashbang line-of-sight sampling, avoiding a new array each time */
 const _projScratch = [];
 const _losScratch = [];
 
-/* ---------------- 特效管理器 ---------------- */
+/* ---------------- Effects manager ---------------- */
 export class Effects {
   constructor(scene) {
     this.scene = scene;
@@ -147,7 +147,7 @@ export class Effects {
     this.cloudTex = new THREE.CanvasTexture(cloudCanvas);
     this.cloudTex.colorSpace = THREE.SRGBColorSpace;
 
-    // 弹着贴花池
+    // Impact decal pool
     const decalGeo = new THREE.CircleGeometry(0.07, 6);
     const decalMat = new THREE.MeshBasicMaterial({ color: 0x05070a, transparent: true, opacity: 0.75, depthWrite: false });
     const decalInst = new THREE.InstancedMesh(decalGeo, decalMat, 140);
@@ -163,23 +163,23 @@ export class Effects {
     scene.add(this.muzzleLight);
     this.muzzleTimer = 0;
 
-    /* ---- 对象池 ----
-       曳光弹与弹着火花原先每次开火/命中都新建 geometry+material+sprite，
-       一次霰弹枪射击（9 颗弹丸）会产生上千个 GPU 对象并立刻销毁。
-       下面按固定上限预分配并循环复用，运行期不再分配 GPU 资源。 */
+    /* ---- Object pools ----
+       Tracers and impact sparks used to create a new geometry+material+sprite on every shot/hit,
+       so one shotgun blast (9 pellets) produced over a thousand GPU objects that were destroyed immediately.
+       Below, fixed caps are preallocated and recycled, so no GPU resources are allocated at runtime. */
     this._tracerPool = [];
     this._tracerFree = [];
     this._sparkPool = [];
     this._sparkFree = [];
-    /* 复用的矩阵/向量：impact() 原先每次调用新建 Matrix4+Quaternion+2×Vector3 */
+    /* Reused matrix/vectors: impact() used to create Matrix4+Quaternion+2×Vector3 on every call */
     this._m4 = new THREE.Matrix4();
     this._q0 = new THREE.Quaternion();
     this._v3 = new THREE.Vector3();
     this._one = new THREE.Vector3(1, 1, 1);
     const TRACER_MAX = 96, SPARK_MAX = 160;
     for (let i = 0; i < TRACER_MAX; i++) {
-      /* 每条曳光弹必须有自己的 geometry（端点各不相同），
-         但都在构造期一次性分配；运行期只改写顶点，不再新建。 */
+      /* Each tracer needs its own geometry (its endpoints differ),
+         but they are all allocated once at construction; runtime only rewrites vertices, never creates new ones. */
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
       const mat = new THREE.LineBasicMaterial({
@@ -194,7 +194,7 @@ export class Effects {
       this._tracerFree.push(i);
     }
     for (let i = 0; i < SPARK_MAX; i++) {
-      /* 同理：每个火花需要独立材质，否则同色火花的 opacity 会互相覆盖 */
+      /* Likewise: each spark needs its own material, or same-colored sparks would overwrite each other's opacity */
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({
         map: this.sparkTex, color: 0xffffff, transparent: true,
         blending: THREE.AdditiveBlending, depthWrite: false,
@@ -207,7 +207,7 @@ export class Effects {
   }
 
   tracer(from, to, color = 0xffe0a8) {
-    // 池耗尽就丢弃这条曳光弹（纯视觉，寿命 55ms，不会造成信息缺失）
+    // If the pool is exhausted, drop this tracer (purely visual, 55 ms lifetime, no information lost)
     if (!this._tracerFree.length) return;
     const idx = this._tracerFree.pop();
     const t = this._tracerPool[idx];
@@ -280,7 +280,7 @@ export class Effects {
       const slot = this._tracerPool[t.i];
       slot.mat.opacity = Math.max(0, t.life / 0.055) * 0.85;
       if (t.life <= 0) {
-        slot.m.visible = false;              // 归还池中，不销毁、不重新分配
+        slot.m.visible = false;              // return to the pool; no destruction, no reallocation
         this._tracerFree.push(t.i);
         this.tracers.splice(i, 1);
       }
@@ -314,19 +314,19 @@ export class Effects {
     }
     if (this.muzzleTimer > 0) {
       this.muzzleTimer -= dt;
-      /* 用 dt 归一化衰减：原来的「每帧 *0.55」在 144Hz 下衰减速度是 60Hz 的 2.4 倍，
-         枪口闪光在不同刷新率下亮度/持续感不一致。 */
+      /* dt-normalized decay: the old "*0.55 per frame" decayed 2.4× faster at 144 Hz than at 60 Hz,
+         so muzzle-flash brightness/duration felt different across refresh rates. */
       if (this.muzzleTimer <= 0) this.muzzleLight.intensity = 0;
-      else this.muzzleLight.intensity *= Math.exp(-dt * 35.8);   // 等效 60fps 下的 0.55
+      else this.muzzleLight.intensity *= Math.exp(-dt * 35.8);   // equivalent to 0.55 at 60fps
     }
   }
 
-  /** 烟幕是否遮挡两点之间的视线 */
+  /** Whether smoke blocks line of sight between two points */
   smokeBlocks(ax, ay, az, bx, by, bz) {
     for (const c of this.smoke) {
       if (c.life < 2) continue;
       const r = c.r * c.group.scale.x;
-      // 点到线段距离（XZ 平面）+ 高度判断
+      // Point-to-segment distance (XZ plane) + height check
       const dx = bx - ax, dz = bz - az;
       const len2 = dx * dx + dz * dz;
       let t = len2 > 0 ? ((c.x - ax) * dx + (c.z - az) * dz) / len2 : 0;
@@ -340,7 +340,7 @@ export class Effects {
   }
 }
 
-/* ---------------- 投掷物 ---------------- */
+/* ---------------- Projectiles ---------------- */
 export function updateProjectiles(game, dt) {
   const { grid } = game.world;
   for (let i = game.projectiles.length - 1; i >= 0; i--) {
@@ -351,7 +351,7 @@ export function updateProjectiles(game, dt) {
     } else {
       p.vy -= 19 * dt;
       const nx = p.x + p.vx * dt, ny = p.y + p.vy * dt, nz = p.z + p.vz * dt;
-      // 简易碰撞
+      // Simple collision
       let hit = false;
       const cands = grid.queryPoint(nx, nz, _projScratch);
       for (const b of cands) {
@@ -374,19 +374,19 @@ export function updateProjectiles(game, dt) {
       p.mesh.rotation.z += dt * 5;
     }
     if (p.fuse <= 0) {
-      /* 关键顺序：先标记 + 先出列，再引爆。
-         否则一旦 detonate 抛异常，带 fuse<=0 的弹体会留在数组里，
-         下一帧再次引爆 —— 每帧重复创建音频节点，直接卡死主线程。 */
+      /* Critical order: mark + remove from the array first, then detonate.
+         Otherwise, if detonate throws, the body with fuse<=0 stays in the array and detonates again
+         next frame — creating audio nodes every frame and locking up the main thread. */
       p.detonated = true;
       game.projectiles.splice(i, 1);
       try {
         detonate(game, p);
       } catch (err) {
-        console.error('[SILENT MERIDIAN] 投掷物引爆失败（已出列，不会重复触发）', err);
+        console.error('[SILENT MERIDIAN] Projectile detonation failed (removed from list, will not retrigger)', err);
       }
       if (p.mesh) {
-        /* 投掷物 mesh 是每次投掷新建的（player.throwGadget），
-           只 remove 不 dispose 会持续泄漏 GPU 资源。 */
+        /* The projectile mesh is created per throw (player.throwGadget);
+           removing it without disposing leaks GPU resources continuously. */
         game.scene.remove(p.mesh);
         if (p.mesh.geometry) p.mesh.geometry.dispose();
         if (p.mesh.material) p.mesh.material.dispose();
@@ -396,7 +396,7 @@ export function updateProjectiles(game, dt) {
   }
 }
 
-/** 兜底：清理所有已引爆或超时残留的弹体（正常情况下数组应为空） */
+/** Backstop: clean up all detonated or timed-out leftover bodies (normally the array should be empty) */
 export function sweepProjectiles(game) {
   const limit = 48;
   if (game.projectiles.length > limit) {
@@ -418,8 +418,8 @@ function detonate(game, p) {
   if (game.stats) game.stats.detonations = (game.stats.detonations || 0) + 1;
   if (p.type === 'smoke') {
     fx.smokeCloud(p.x, 0, p.z, p.radius || 11, 18);
-    game.log('烟幕展开 — 视线阻断', 'warn');
-    game.addMapEvent(p.x, p.z, '烟幕展开', 'support');
+    game.log('Smoke deployed — line of sight blocked', 'warn');
+    game.addMapEvent(p.x, p.z, 'Smoke deployed', 'support');
     return;
   }
   if (p.type === 'breach') {
@@ -430,11 +430,11 @@ function detonate(game, p) {
       const d = Math.hypot(a.pos.x - p.x, a.pos.z - p.z);
       if (d < 14) a.suppress(3.0, 1);
     }
-    game.addMapEvent(p.x, p.z, '爆炸', 'explosion');
-    game.raiseAlarm('爆炸声');
+    game.addMapEvent(p.x, p.z, 'Explosion', 'explosion');
+    game.raiseAlarm('explosion');
     return;
   }
-  // 闪光弹
+  // Flashbang
   game.audio.flashbang();
   game.shake(0.35, 0.3);
   for (const a of game.actors) {
@@ -456,13 +456,13 @@ function detonate(game, p) {
     if (d < r) {
       const k = 1 - d / r;
       game.player.blind = Math.max(game.player.blind || 0, 1.2 * k);
-      // 白屏必须“即刻”出现（此前错误地在失能结束时才闪），且只改 opacity
+      // The whiteout must appear immediately (it used to flash only when the blind effect ended), and only opacity changes
       if (game.ui) game.ui.flash(0.30 + 0.55 * k);
     }
   }
-  game.log('闪光弹引爆 — 目标失能', 'good');
-  game.addMapEvent(p.x, p.z, '闪光弹', 'explosion');
-  game.raiseAlarm('闪光弹');
+  game.log('Flashbang detonated — targets disabled', 'good');
+  game.addMapEvent(p.x, p.z, 'Flashbang', 'explosion');
+  game.raiseAlarm('flashbang');
 }
 
 function losBlockedQuick(game, from, to) {

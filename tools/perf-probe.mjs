@@ -1,15 +1,15 @@
 /* ============================================================
-   tools/perf-probe.mjs — 性能与资源回归探测
+   tools/perf-probe.mjs — performance and resource regression probe
    ------------------------------------------------------------
-   这不是「通过/失败」型测试，而是**可比较的量化基线**：
-   输出每帧 DOM 变更数、布局读取数、逻辑耗时，以及反复部署时的
-   GPU 资源增量。用它来证明优化真的有效，而不是凭感觉。
+   This is not a "pass/fail" test but a **comparable quantitative baseline**:
+   it reports per-frame DOM mutations, layout reads and logic time, plus GPU resource
+   growth across repeated deployments. Use it to prove an optimization actually worked, not to go by feel.
 
-   用法：
-     node tools/perf-probe.mjs               # 打印当前指标
-     node tools/perf-probe.mjs --json        # 机器可读，便于前后对比
-     node tools/perf-probe.mjs --save a.json # 存为基准
-     node tools/perf-probe.mjs --diff a.json # 与基准比较（回归则退出码非 0）
+   Usage:
+     node tools/perf-probe.mjs               # print current metrics
+     node tools/perf-probe.mjs --json        # machine-readable, convenient for before/after
+     node tools/perf-probe.mjs --save a.json # save as baseline
+     node tools/perf-probe.mjs --diff a.json # compare with baseline (non-zero exit on regression)
    ============================================================ */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { Suite } from './harness.mjs';
@@ -34,16 +34,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 await page.goto('http://127.0.0.1:8251/?deploy=1&pos=0,-30&yaw=0', { waitUntil: 'load' });
 await wait(2800);
 
-/* ---------------- 每帧 DOM / 布局计量 ---------------- */
+/* ---------------- Per-frame DOM / layout measurement ---------------- */
 await page.evaluate(() => {
   const g = window.__game;
-  g.testMode = false;                 // 必须走真实主循环，否则量不到每帧开销
+  g.testMode = false;                 // must use the real main loop, or per-frame cost cannot be measured
   const m = window.__perf = {
     frames: 0, domRecords: 0, layoutReads: 0,
     domByType: { childList: 0, attributes: 0, characterData: 0 },
   };
 
-  /* DOM 变更：观察 #hud 整棵子树 */
+  /* DOM mutations: observe the entire #hud subtree */
   const hud = document.getElementById('hud');
   const mo = new MutationObserver((recs) => {
     for (const r of recs) {
@@ -54,7 +54,7 @@ await page.evaluate(() => {
   mo.observe(hud, { childList: true, subtree: true, attributes: true, characterData: true });
   m._mo = mo;
 
-  /* 布局读取：拦截 clientWidth / clientHeight / getBoundingClientRect 的 getter */
+  /* Layout reads: intercept the clientWidth / clientHeight / getBoundingClientRect getters */
   const count = (proto, prop) => {
     const d = Object.getOwnPropertyDescriptor(proto, prop);
     if (!d || !d.get) return;
@@ -68,7 +68,7 @@ await page.evaluate(() => {
   const gbcr = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function (...a) { m.layoutReads++; return gbcr.apply(this, a); };
 
-  /* 帧计数 */
+  /* Frame counting */
   const tick = () => { m.frames++; requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
 });
@@ -89,7 +89,7 @@ const perFrame = await page.evaluate(() => {
   };
 });
 
-/* ---------------- GPU 资源：反复部署的增量 ---------------- */
+/* ---------------- GPU resources: growth across repeated deployments ---------------- */
 const gpu = await page.evaluate(async () => {
   const g = window.__game;
   const info = g.renderer.info;
@@ -98,8 +98,8 @@ const gpu = await page.evaluate(async () => {
     textures: info.memory.textures,
     programs: info.programs ? info.programs.length : -1,
   });
-  /* 逐次部署后快照：用「相邻两次的差」衡量稳态泄漏，
-     避免把首次部署的一次性初始化误算成每次泄漏。 */
+  /* Snapshot after each deployment: use the "difference between adjacent deployments" to measure steady-state leakage,
+     avoiding counting one-time first-deployment initialization as a per-deployment leak. */
   const series = [snap()];
   for (let i = 0; i < 5; i++) {
     g.deploy(g.loadout);
@@ -114,7 +114,7 @@ const gpu = await page.evaluate(async () => {
       dp: series[i].programs - series[i - 1].programs,
     });
   }
-  const tail = steps.slice(2);            // 丢掉前两次（仍含惰性初始化）
+  const tail = steps.slice(2);            // drop the first two (still contain lazy initialization)
   const avg = (k) => tail.length ? +(tail.reduce((s, x) => s + x[k], 0) / tail.length).toFixed(1) : 0;
   const before = series[0], after = series[series.length - 1];
   return {
@@ -126,14 +126,14 @@ const gpu = await page.evaluate(async () => {
   };
 });
 
-/* ---------------- WebGL 资源对象计数（framebuffer 等） ---------------- */
+/* ---------------- WebGL resource object counts (framebuffers etc.) ---------------- */
 const glCounts = await page.evaluate(() => {
   const g = window.__game;
   const gl = g.renderer.getContext();
   const counts = { framebuffers: 0, textures: 0, buffers: 0 };
   const patch = (name, key) => {
     const orig = gl[name].bind(gl);
-    // 只统计「创建」；删除由 deleteX 计数
+    // Count only "creates"; deletions are counted by deleteX
     gl[name] = function (...a) { counts[key]++; return orig(...a); };
   };
   let deleted = 0;
@@ -152,54 +152,54 @@ if (asJson) {
 } else {
   console.log('');
   console.log('===== perf-probe =====');
-  console.log('每帧 DOM 变更        : ' + perFrame.domPerFrame + ' 条  ' + JSON.stringify(perFrame.domByType));
-  console.log('每帧布局读取        : ' + perFrame.layoutReadsPerFrame + ' 次');
-  console.log('逻辑耗时 平均/峰值  : ' + perFrame.logicAvgMs + ' / ' + perFrame.logicMaxMs + ' ms');
-  console.log('采样帧数            : ' + perFrame.frames);
-  console.log('5 次部署的 GPU 增量 : geometries ' + gpu.dGeometries +
+  console.log('Per-frame DOM mutations : ' + perFrame.domPerFrame + '  ' + JSON.stringify(perFrame.domByType));
+  console.log('Per-frame layout reads  : ' + perFrame.layoutReadsPerFrame);
+  console.log('Logic time avg/peak     : ' + perFrame.logicAvgMs + ' / ' + perFrame.logicMaxMs + ' ms');
+  console.log('Sampled frames          : ' + perFrame.frames);
+  console.log('GPU growth over 5 deployments: geometries ' + gpu.dGeometries +
     ' / textures ' + gpu.dTextures + ' / programs ' + gpu.dPrograms);
-  console.log('  稳态每次部署(后3次): ' + JSON.stringify(gpu.perDeploy));
-  console.log('  逐次增量[geo,tex]   : ' + JSON.stringify(gpu.steps.map(x=>[x.dg,x.dt])));
-  console.log('  绝对[geo,tex]序列   : ' + JSON.stringify(gpu.series.map(x=>[x.geometries,x.textures])));
-  console.log('3 次部署新建/删除 FBO: ' + glCounts.created + ' / ' + glCounts.deleted);
+  console.log('  steady-state per deployment (last 3): ' + JSON.stringify(gpu.perDeploy));
+  console.log('  per-deployment delta [geo,tex]      : ' + JSON.stringify(gpu.steps.map(x=>[x.dg,x.dt])));
+  console.log('  absolute [geo,tex] series           : ' + JSON.stringify(gpu.series.map(x=>[x.geometries,x.textures])));
+  console.log('FBOs created/deleted over 3 deployments: ' + glCounts.created + ' / ' + glCounts.deleted);
 }
 
 if (saveTo) {
   writeFileSync(saveTo, JSON.stringify(result, null, 2) + '\n', 'utf8');
-  console.error('[perf-probe] 已保存基准: ' + saveTo);
+  console.error('[perf-probe] baseline saved: ' + saveTo);
 }
 
 if (diffFrom) {
   if (!existsSync(diffFrom)) {
-    console.error('[perf-probe] 找不到基准文件: ' + diffFrom);
+    console.error('[perf-probe] baseline file not found: ' + diffFrom);
     process.exit(2);
   }
   const base = JSON.parse(readFileSync(diffFrom, 'utf8'));
-  /* 每项都要说明「哪个方向更好」：FBO 删除数是越多越好，其余越少越好。
-     逻辑耗时在 swiftshader 下噪声很大（采样帧数少），给更宽的容差。 */
+  /* Every item must state "which direction is better": more FBO deletions is better, fewer of everything else is better.
+     Logic time is very noisy under swiftshader (few sampled frames), so it gets a wider tolerance. */
   const rows = [
-    ['每帧 DOM 变更', base.perFrame.domPerFrame, perFrame.domPerFrame, 'lower', 0.10],
-    ['每帧布局读取', base.perFrame.layoutReadsPerFrame, perFrame.layoutReadsPerFrame, 'lower', 0.10],
-    ['部署增量 geometries', base.gpu.perDeploy.geometries, gpu.perDeploy.geometries, 'lower', 0.10],
-    ['部署增量 textures', base.gpu.perDeploy.textures, gpu.perDeploy.textures, 'lower', 0.10],
-    ['3 次部署新建 FBO', base.glCounts.created, glCounts.created, 'lower', 0.10],
-    ['3 次部署删除 FBO', base.glCounts.deleted, glCounts.deleted, 'higher', 0.10],
-    ['逻辑耗时(平均, 仅供参考)', base.perFrame.logicAvgMs, perFrame.logicAvgMs, 'lower', 0.60],
+    ['per-frame DOM mutations', base.perFrame.domPerFrame, perFrame.domPerFrame, 'lower', 0.10],
+    ['per-frame layout reads', base.perFrame.layoutReadsPerFrame, perFrame.layoutReadsPerFrame, 'lower', 0.10],
+    ['per-deployment geometries', base.gpu.perDeploy.geometries, gpu.perDeploy.geometries, 'lower', 0.10],
+    ['per-deployment textures', base.gpu.perDeploy.textures, gpu.perDeploy.textures, 'lower', 0.10],
+    ['FBOs created over 3 deployments', base.glCounts.created, glCounts.created, 'lower', 0.10],
+    ['FBOs deleted over 3 deployments', base.glCounts.deleted, glCounts.deleted, 'higher', 0.10],
+    ['logic time (avg, informational)', base.perFrame.logicAvgMs, perFrame.logicAvgMs, 'lower', 0.60],
   ];
   console.log('');
-  console.log('===== 与基准对比 =====');
+  console.log('===== Comparison with baseline =====');
   let regress = 0;
   for (const [name, b, n, better, tol] of rows) {
     const delta = n - b;
     const pct = b !== 0 ? (delta / Math.abs(b)) * 100 : (n === 0 ? 0 : Infinity);
     const worse = better === 'lower' ? (n > b * (1 + tol) + 1e-9) : (n < b * (1 - tol) - 1e-9);
     const improved = better === 'lower' ? (n < b * (1 - tol)) : (n > b * (1 + tol));
-    if (worse && !name.includes('仅供参考')) regress++;
-    const tag = worse ? '[回归]' : (improved ? '[改善]' : '[持平]');
+    if (worse && !name.includes('informational')) regress++;
+    const tag = worse ? '[REGRESSION]' : (improved ? '[IMPROVED]' : '[UNCHANGED]');
     console.log(tag + ' ' + name.padEnd(24) + b + ' -> ' + n +
       '  (' + (Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%' : 'n/a') + ')');
   }
-  console.log(regress ? '[RESULT] FAIL（' + regress + ' 项回归）' : '[RESULT] PASS');
+  console.log(regress ? '[RESULT] FAIL (' + regress + ' regressions)' : '[RESULT] PASS');
   await browser.close();
   await server.close();
   process.exit(regress ? 1 : 0);

@@ -1,12 +1,12 @@
 /* ============================================================
-   main.js — 引导
+   main.js — bootstrap
    ============================================================ */
 import { Game } from './game.js';
 import { DEFAULT_LOADOUT } from './data.js';
 
 const canvas = document.querySelector('#view');
 
-// 通知调试面板：主脚本已成功执行（用于区分“脚本没跑”与“脚本跑了但功能异常”）
+// Notify the debug panel that the main script executed successfully (distinguishes "script didn't run" from "script ran but misbehaved")
 if (window.__SM_DEBUG) window.__SM_DEBUG.mainLoaded = true;
 
 function fail(msg) {
@@ -18,8 +18,8 @@ function fail(msg) {
 }
 
 window.addEventListener('error', (e) => {
-  const msg = '运行期异常：' + (e.message || e.error || 'unknown');
-  // 仅在尚未进入行动时用全屏提示；游戏中的偶发异常只记录日志，避免打断游玩
+  const msg = 'Runtime error: ' + (e.message || e.error || 'unknown');
+  // Show the full-screen message only before the operation starts; sporadic in-game errors are logged only, to avoid interrupting play
   if (!window.__game || window.__game.state === 'menu') fail(msg);
   else console.error('[SILENT MERIDIAN]', msg);
 });
@@ -28,7 +28,7 @@ try {
   const game = new Game(canvas);
   window.__game = game;
 
-  // QA / 调试参数
+  // QA / debug parameters
   const params = new URLSearchParams(location.search);
   if (params.has('deploy')) {
     game.deploy({ ...DEFAULT_LOADOUT });
@@ -39,7 +39,7 @@ try {
       game.player.y = 0;
     }
     if (params.has('freeze')) game.paused = true;
-    /* 测试模式：由外部以固定步长驱动 advance()，用于可复现的回归基线 */
+    /* Test mode: advance() driven externally at a fixed timestep for reproducible regression baselines */
     if (params.has('test')) game.testMode = true;
     if (params.has('novm') && game.viewmodel) game.viewmodel.root.visible = false;
     if (params.has('nolight')) game.lightOn = false;
@@ -57,7 +57,7 @@ try {
       setTimeout(() => { game.player.fireOnce(); }, 1500);
     }
     if (params.has('dummy')) {
-      // QA: 在正前方放置静止目标，用于检查模型与识别流程
+      // QA: place stationary targets straight ahead to check models and the identification flow
       setTimeout(() => {
         const d = parseFloat(params.get('dummy')) || 8;
         const p = game.player;
@@ -93,18 +93,18 @@ try {
     game.screens.show(params.get('screen'));
   }
   if (params.has('debrief')) {
-    // QA: 用样例数据检查战果面板版式
+    // QA: check the debrief panel layout with sample data
     game.screens.showDebrief({
-      success: true, grade: 'A', comment: '流程干净、节奏克制。小队的推进与火力纪律都符合警备处的标准作业程序。',
+      success: true, grade: 'A', comment: 'Clean process and restrained tempo. The squad\'s movement and fire discipline met the Security Office standard operating procedure.',
       time: '7:24', shots: 61, accuracy: 38, blindShots: 3, detained: 3, killed: 1, escaped: 0,
       suspectTotal: 9, civSafe: 4, civLost: 0, civTotal: 4, orders: 11, squadDown: 0, gadgets: 2,
       objectives: { manifest: 'done', evidence: 'done', civilians: 'done', suspects: 'done', extract: 'done' },
       squad: [
-        { callsign: 'LEAD', role: '制式防弹背心', alive: true, hp: 96, maxHp: 120 },
-        { callsign: 'ARDEN-2', role: 'RIFLEMAN · 侦察', alive: true, hp: 118, maxHp: 130 },
-        { callsign: 'BRAM-3', role: 'RIFLEMAN · 火力', alive: true, hp: 74, maxHp: 130 },
-        { callsign: 'CIRA-4', role: 'BREACHER · 突击', alive: true, hp: 130, maxHp: 130 },
-        { callsign: 'DOV-5', role: 'MEDIC · 支援', alive: true, hp: 101, maxHp: 130 },
+        { callsign: 'LEAD', role: 'Standard Ballistic Vest', alive: true, hp: 96, maxHp: 120 },
+        { callsign: 'ARDEN-2', role: 'RIFLEMAN · Scout', alive: true, hp: 118, maxHp: 130 },
+        { callsign: 'BRAM-3', role: 'RIFLEMAN · Support', alive: true, hp: 74, maxHp: 130 },
+        { callsign: 'CIRA-4', role: 'BREACHER · Assault', alive: true, hp: 130, maxHp: 130 },
+        { callsign: 'DOV-5', role: 'MEDIC · Support', alive: true, hp: 101, maxHp: 130 },
       ],
     });
     game.screens.show('debrief');
@@ -116,7 +116,7 @@ try {
     const at = (ms, fn) => setTimeout(fn, ms);
     at(1200, () => {
       const p = game.player;
-      // 1) 货单
+      // 1) Manifest
       const m = game.objectiveProps.manifest;
       p.pos.x = m.x; p.pos.z = m.z + 1;
       game.actors.forEach((a) => { if (a.kind === 'suspect') { a.pos.x = -60; a.pos.z = -60; } });
@@ -139,14 +139,14 @@ try {
       log('extract_before_civs', game.objectiveState.extract);
     });
     at(3400, () => {
-      // 直接把其余平民标记为已撤离，检查撤离点激活
+      // Mark the remaining civilians as evacuated to check extraction activation
       game.civilians.forEach((c) => { if (!c.safe) { c.safe = true; c.escorted = true; game.onCivilianSafe(c); } });
       game.refreshObjectives(); game.checkExtractReady();
       log('civilians', game.objectiveState.civilians);
       log('extract_after_civs', game.objectiveState.extract);
     });
     at(4200, () => {
-      // 拘押流程
+      // Detention flow
       const s = game.suspects[0];
       s.pos.x = -30; s.pos.z = 20; s.hp = 30;
       s.surrender();
@@ -157,7 +157,7 @@ try {
       log('suspect_state', s.state);
     });
     at(5200, () => {
-      // 撤离
+      // Extraction
       const p = game.player;
       game.squad.forEach((s, i) => { s.pos.x = p.pos.x + i; s.pos.z = p.pos.z; });
       const ex = game.world.objectives.extract;
@@ -167,5 +167,5 @@ try {
     at(6200, () => console.log('[AUTOTEST] RESULTS ' + R.join(' | ')));
   }
 } catch (e) {
-  fail('初始化失败：' + (e && e.message ? e.message : String(e)));
+  fail('Initialization failed: ' + (e && e.message ? e.message : String(e)));
 }

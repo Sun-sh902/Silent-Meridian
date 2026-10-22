@@ -1,9 +1,9 @@
-/* 一次性构建期使用的复用查询缓冲（避免在候选点循环里反复新建数组） */
+/* Reused query buffer for one-time build-time work (avoids allocating arrays repeatedly in candidate loops) */
 const _coverScratch = [];
 
 /* ============================================================
-   world.js — 原创港区布局 / 光照 / 海雾夜氛围
-   坐标：X 向东，-Z 向北（码头方向），+Y 向上，单位米
+   world.js — original port layout / lighting / foggy-night atmosphere
+   Coordinates: X east, -Z north (toward the docks), +Y up, in meters
    ============================================================ */
 import * as THREE from 'three';
 import { Grid } from './geom.js';
@@ -17,7 +17,7 @@ export const WORLD = {
 };
 
 /* ============================================================
-   几何批处理器：把大量静态盒体合并成少量网格
+   Geometry batcher: merges many static boxes into a few meshes
    ============================================================ */
 const _nonIndexedCache = new WeakMap();
 function nonIndexed(g) {
@@ -30,7 +30,7 @@ function nonIndexed(g) {
 class Batcher {
   constructor() {
     this.b = new Map();
-    /* add() 用的复用临时量 */
+    /* Reused temporaries for add() */
     this._nm = new THREE.Matrix3();
     this._v = new THREE.Vector3();
     this._vn = new THREE.Vector3();
@@ -47,7 +47,7 @@ class Batcher {
     const n = src.attributes.normal.array;
     const u = src.attributes.uv ? src.attributes.uv.array : null;
     const o = this._b(name);
-    /* 复用的临时量：原先每次 add() 都新建 Matrix3 + 2×Vector3 + Color */
+    /* Reused temporaries: this used to create Matrix3 + 2×Vector3 + Color on every add() */
     const nm = this._nm.getNormalMatrix(matrix);
     const v = this._v, vn = this._vn, c = this._c.set(color);
     for (let i = 0; i < p.length; i += 3) {
@@ -57,7 +57,7 @@ class Batcher {
       o.nor.push(vn.x, vn.y, vn.z);
       o.col.push(c.r, c.g, c.b);
     }
-    /* 不用 o.uv.push(...u)：参数展开在 u 较长时会爆栈，且逐元素 push 更慢 */
+    /* Do not use o.uv.push(...u): spreading blows the stack for long u, and per-element push is slower */
     if (u) {
       for (let i = 0; i < u.length; i++) o.uv.push(u[i]);
     } else {
@@ -90,7 +90,7 @@ const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 14);
 const UNIT_CYL_LO = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
 
 /* ============================================================
-   Level：同时产出几何体与碰撞体
+   Level: produces geometry and collision boxes together
    ============================================================ */
 class Level {
   constructor(scene, grid) {
@@ -106,7 +106,7 @@ class Level {
     this._s = new THREE.Vector3();
   }
 
-  /** 以「边界」方式添加盒体 + 碰撞 */
+  /** Add a box + collision using boundary values */
   box(x0, x1, y0, y1, z0, z1, o = {}) {
     const bucket = o.bucket || 'concrete';
     const color = o.color !== undefined ? o.color : 0x39404a;
@@ -127,7 +127,7 @@ class Level {
     return this;
   }
 
-  /** 带旋转的盒体（集装箱、道具） */
+  /** Rotated box (containers, props) */
   rotBox(cx, cy, cz, sx, sy, sz, ry, o = {}) {
     const bucket = o.bucket || 'paint';
     const color = o.color !== undefined ? o.color : 0x445a52;
@@ -169,8 +169,8 @@ class Level {
   }
 
   /**
-   * 沿 Z 轴延伸的墙（位于常量 x 处），可带门/窗开口。
-   * openings: [{from,to,sill,head,glass}] —— from/to 为 z 坐标
+   * Wall running along Z (at a constant x), optionally with door/window openings.
+   * openings: [{from,to,sill,head,glass}] — from/to are z coordinates
    */
   wallX(xc, thick, z0, z1, y0, y1, openings, color, opts = {}) {
     const list = (openings || []).slice().sort((a, b) => a.from - b.from);
@@ -190,7 +190,7 @@ class Level {
     return this;
   }
 
-  /** 沿 X 轴延伸的墙（位于常量 z 处） */
+  /** Wall running along X (at a constant z) */
   wallZ(zc, thick, x0, x1, y0, y1, openings, color, opts = {}) {
     const list = (openings || []).slice().sort((a, b) => a.from - b.from);
     let cur = Math.min(x0, x1);
@@ -226,7 +226,7 @@ class Level {
 }
 
 /* ============================================================
-   环境贴图（湿反射来源）
+   Environment map (source of wet reflections)
    ============================================================ */
 function buildEnvironment(renderer) {
   const c = document.createElement('canvas');
@@ -239,7 +239,7 @@ function buildEnvironment(renderer) {
   grd.addColorStop(0.68, '#0d1a22');
   grd.addColorStop(1.00, '#05080b');
   g.fillStyle = grd; g.fillRect(0, 0, 512, 256);
-  // 地平线灯带 + 灯点
+  // Horizon light band + light points
   for (let i = 0; i < 26; i++) {
     const x = Math.random() * 512, y = 118 + Math.random() * 22;
     const r = 8 + Math.random() * 22;
@@ -259,13 +259,13 @@ function buildEnvironment(renderer) {
   const rt = pmrem.fromEquirectangular(tex);
   pmrem.dispose();
   tex.dispose();
-  /* 返回 render target 本身，而不是只返回 rt.texture：
-     把 RT 丢掉之后它的 framebuffer / 纹理就再也无法释放，
-     每次重新部署都会净增若干纹理与 framebuffer。 */
+  /* Return the render target itself, not just rt.texture:
+     once the RT is dropped, its framebuffer / texture can never be released,
+     leaking several textures and framebuffers per redeployment. */
   return rt;
 }
 
-/* 夜空渐变（等距圆柱背景） */
+/* Night-sky gradient (equirectangular background) */
 function buildSkyTexture() {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 512;
@@ -280,7 +280,7 @@ function buildSkyTexture() {
   grd.addColorStop(0.72, '#070c12');
   grd.addColorStop(1.00, '#04070a');
   g.fillStyle = grd; g.fillRect(0, 0, 1024, 512);
-  // 云层
+  // Clouds
   for (let i = 0; i < 90; i++) {
     const x = Math.random() * 1024, y = 120 + Math.random() * 180;
     const rx = 120 + Math.random() * 260, ry = 22 + Math.random() * 46;
@@ -291,7 +291,7 @@ function buildSkyTexture() {
     g.fillStyle = rg; g.beginPath(); g.arc(x, y, rx, 0, 6.3); g.fill();
     g.restore();
   }
-  // 港口光污染
+  // Port light pollution
   for (let i = 0; i < 40; i++) {
     const x = Math.random() * 1024, y = 268 + Math.random() * 20;
     const r = 40 + Math.random() * 120;
@@ -321,7 +321,7 @@ function glowTexture() {
 }
 
 /* ============================================================
-   构建世界
+   Build the world
    ============================================================ */
 export function buildWorld(scene, renderer) {
   const grid = new Grid(8);
@@ -329,14 +329,14 @@ export function buildWorld(scene, renderer) {
   const rng = L.rng;
 
   scene.fog = new THREE.FogExp2(0x0a141d, 0.0158);
-  /* 背景贴图与环境贴图都不在场景图里，scene.traverse 扫不到它们，
-     必须显式持有引用并在 disposeMission 里释放。 */
+  /* Neither the background texture nor the environment map is in the scene graph, so scene.traverse cannot reach them;
+     references must be held explicitly and released in disposeMission. */
   const skyTex = buildSkyTexture();
   scene.background = skyTex;
   const envRT = buildEnvironment(renderer);
   scene.environment = envRT.texture;
 
-  /* ---------------- 材质 ---------------- */
+  /* ---------------- Materials ---------------- */
   const asphalt = TX.asphaltTexture();
   asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
   const mats = {
@@ -366,7 +366,7 @@ export function buildWorld(scene, renderer) {
   };
   mats.concrete.map.wrapS = mats.concrete.map.wrapT = THREE.RepeatWrapping;
 
-  /* ---------------- 地面 / 水面 ---------------- */
+  /* ---------------- Ground / water ---------------- */
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), mats.asphalt);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -378,23 +378,23 @@ export function buildWorld(scene, renderer) {
   water.position.set(0, -1.5, WORLD.waterZ - 130);
   scene.add(water);
 
-  /* ---------------- 码头边缘 ---------------- */
+  /* ---------------- Quay edge ---------------- */
   L.box(-80, 80, -1.6, 0.02, WORLD.waterZ - 2.2, WORLD.waterZ, { color: 0x2b3138, bucket: 'concrete' });
   L.box(-80, 80, 0.0, 0.5, WORLD.waterZ - 0.2, WORLD.waterZ + 0.9, { color: 0x3a424c, bucket: 'concrete' });
   for (let x = -76; x <= 76; x += 9) {
     L.cyl(x, 0.62, WORLD.waterZ + 0.4, 0.42, 0.62, { color: 0x2f353c, collide: false, lowPoly: true });
     L.cyl(x, 1.05, WORLD.waterZ + 0.4, 0.19, 0.5, { color: 0x50585f, collide: false, lowPoly: true });
   }
-  // 护舷
+  // Fenders
   for (let x = -70; x <= 70; x += 16) {
     L.cyl(x, -0.4, WORLD.waterZ - 0.35, 0.5, 1.5, { color: 0x15181c, collide: false, lowPoly: true });
   }
 
-  /* ---------------- 围栏 ---------------- */
+  /* ---------------- Perimeter fence ---------------- */
   const fenceMat = new THREE.MeshStandardMaterial({
-    /* 有 alphaTest 就足以裁掉网眼，不需要 transparent:true。
-       一旦标成 transparent，网格会被丢进透明队列：每帧参与排序、
-       失去深度预写、与被遮挡物之间的绘制顺序也不可靠。 */
+    /* alphaTest is enough to cut out the mesh holes; transparent:true is unnecessary.
+       Once marked transparent, the mesh goes into the transparent queue: sorted every frame,
+       losing depth prepass, with unreliable draw order against occluders. */
     map: TX.fenceTexture(), transparent: false, alphaTest: 0.28, side: THREE.DoubleSide,
     color: 0x8b98a4, metalness: 0.7, roughness: 0.5, depthWrite: true,
   });
@@ -412,7 +412,7 @@ export function buildWorld(scene, renderer) {
     m.position.set((x0 + x1) / 2, 1.65, (z0 + z1) / 2);
     m.rotation.y = Math.atan2(dx, dz) + Math.PI / 2;
     scene.add(m);
-    // 立柱
+    // Posts
     const n = Math.max(2, Math.round(len / 4));
     for (let i = 0; i <= n; i++) {
       const t2 = i / n;
@@ -433,12 +433,12 @@ export function buildWorld(scene, renderer) {
   addFence(-72, -66, -72, 50);
   addFence(72, -66, 72, 50);
 
-  /* ---------------- 三号仓 BAY 3 ---------------- */
+  /* ---------------- BAY 3 warehouse ---------------- */
   const whA = { x0: -64, x1: -20, z0: -26, z1: 4, h: 9.5 };
   const wallC = 0x333a45;
-  // 地面
+  // Floor
   L.box(whA.x0, whA.x1, 0.0, 0.14, whA.z0, whA.z1, { color: 0x2c333c, bucket: 'concrete', collide: false });
-  // 四面墙：西墙完整，东墙留两处货门，南墙留出入门
+  // Four walls: west wall solid, east wall with two cargo doors, south wall with an access door
   L.wallX(whA.x0 + 0.3, 0.6, whA.z0, whA.z1, 0, whA.h, [], wallC);
   L.wallX(whA.x1 - 0.3, 0.6, whA.z0, whA.z1, 0, whA.h, [
     { from: -22.4, to: -16.0, sill: 0, head: 6.4, glass: false },
@@ -448,22 +448,22 @@ export function buildWorld(scene, renderer) {
   L.wallZ(whA.z1 - 0.3, 0.6, whA.x0, whA.x1, 0, whA.h, [
     { from: -40.4, to: -36.6, sill: 0, head: 3.0, glass: false },
   ], wallC);
-  // 屋顶
+  // Roof
   L.box(whA.x0 - 0.4, whA.x1 + 0.4, whA.h, whA.h + 0.5, whA.z0 - 0.4, whA.z1 + 0.4,
     { color: 0x252b33, bucket: 'metal' });
 
-  // 内部立柱
+  // Interior columns
   for (let z = whA.z0 + 5; z < whA.z1 - 2; z += 6) {
     L.box(-42.5, -41.5, 0, whA.h - 0.6, z - 0.5, z + 0.5, { color: 0x3b434e, bucket: 'concrete' });
   }
-  // 货架
+  // Racking
   for (let i = 0; i < 5; i++) {
     const z = -22 + i * 5.5;
     L.box(-62, -52, 0, 3.6, z, z + 1.6, { color: 0x4a5158, bucket: 'metal' });
     L.box(-50, -44, 0, 3.6, z, z + 1.6, { color: 0x4a5158, bucket: 'metal' });
     L.box(-42, -38.5, 0, 2.4, z + 1.0, z + 2.4, { color: 0x4d4438, bucket: 'paint' });
   }
-  // 三号仓办公室（东北角，内含货单）
+  // BAY 3 office (northeast corner, contains the manifest)
   const off = { x0: -34, x1: -21.2, z0: -25.4, z1: -17.4 };
   L.box(off.x0, off.x1, 0, 0.12, off.z0, off.z1, { color: 0x3a4149, bucket: 'concrete', collide: false });
   const offC = 0x3d4650;
@@ -474,17 +474,17 @@ export function buildWorld(scene, renderer) {
   L.wallZ(off.z1 + 0.125, 0.25, off.x0, off.x1, 0, 3.0,
     [{ from: -30.4, to: -28.6, sill: 0, head: 2.2, glass: false }], offC);
   L.box(off.x0 - 0.3, off.x1 + 0.3, 3.0, 3.25, off.z0 - 0.3, off.z1 + 0.3, { color: 0x333a42, collide: false });
-  // 办公室内：桌子、柜子、白板
+  // Office interior: desk, cabinet, whiteboard
   L.box(-32.6, -30.2, 0, 0.78, -24.4, -22.6, { color: 0x5a4a37, bucket: 'paint' });
   L.box(-32.6, -30.2, 0.78, 0.84, -24.6, -22.4, { color: 0x6b5842, bucket: 'paint', collide: false });
   L.box(-24.4, -23.0, 0, 1.9, -25.0, -23.4, { color: 0x4b5560, bucket: 'metal' });
   L.box(-31.0, -28.4, 1.1, 2.0, -25.2, -25.0, { color: 0xd8dde2, bucket: 'paint', collide: false });
   L.cyl(-25.6, 0.3, -19.4, 0.32, 0.6, { color: 0x2f363d, collide: true, lowPoly: true });
-  // 招牌
+  // Signage
   L.sign('VOLKERSTADT LOGISTIK', 'BAY 3 · GENERAL CARGO', -20.1, 7.2, -11, 12, 3, Math.PI / 2, { code: 'MPA-03' });
-  L.sign('三号仓', 'BAY 3', -20.2, 4.6, 1.6, 6, 1.5, Math.PI / 2, { accent: '#e8c247', code: 'ENT-3B' });
+  L.sign('WAREHOUSE 3', 'BAY 3', -20.2, 4.6, 1.6, 6, 1.5, Math.PI / 2, { accent: '#e8c247', code: 'ENT-3B' });
 
-  /* ---------------- 冷库 KÜHLHAUS ---------------- */
+  /* ---------------- KÜHLHAUS cold store ---------------- */
   const whB = { x0: 18, x1: 62, z0: 6, z1: 40, h: 8 };
   L.box(whB.x0, whB.x1, 0, 0.14, whB.z0, whB.z1, { color: 0x2a3138, bucket: 'concrete', collide: false });
   const whBC = 0x39424c;
@@ -495,19 +495,19 @@ export function buildWorld(scene, renderer) {
     [{ from: 33.5, to: 38.5, sill: 0, head: 3.2, glass: false }], whBC);
   L.wallZ(whB.z1 - 0.3, 0.6, whB.x0, whB.x1, 0, whB.h, [], whBC);
   L.box(whB.x0 - 0.4, whB.x1 + 0.4, whB.h, whB.h + 0.6, whB.z0 - 0.4, whB.z1 + 0.4, { color: 0x20262d, bucket: 'metal' });
-  // 冷库内货架与托盘
+  // Cold-store racking and pallets
   for (let i = 0; i < 4; i++) {
     const z = 12 + i * 7;
     L.box(30, 44, 0, 4.2, z, z + 1.8, { color: 0x515a63, bucket: 'metal' });
     L.box(46, 58, 0, 4.2, z, z + 1.8, { color: 0x515a63, bucket: 'metal' });
   }
-  L.sign('EISWERK KÜHLHAUS', 'COLD STORE · 冷库', 17.7, 6.2, 12, 11, 2.8, -Math.PI / 2, { code: 'CS-2', accent: '#7fd6ff' });
+  L.sign('EISWERK KÜHLHAUS', 'COLD STORE', 17.7, 6.2, 12, 11, 2.8, -Math.PI / 2, { code: 'CS-2', accent: '#7fd6ff' });
 
-  /* ---------------- 调度楼 DISPATCH ---------------- */
+  /* ---------------- DISPATCH building ---------------- */
   const dp = { x0: 22, x1: 54, z0: -42, z1: -20, h: 6.6 };
   L.box(dp.x0, dp.x1, 0, 0.16, dp.z0, dp.z1, { color: 0x2f363e, bucket: 'concrete', collide: false });
   const dpC = 0x3c4550;
-  // 西立面：面向堆场，开窗以便外部观察
+  // West facade: faces the yard, windows for external observation
   L.wallX(dp.x0 + 0.25, 0.5, dp.z0, dp.z1, 0, dp.h, [
     { from: -38.6, to: -34.6, sill: 1.3, head: 3.2, glass: true },
     { from: -30.2, to: -26.2, sill: 1.3, head: 3.2, glass: true },
@@ -518,7 +518,7 @@ export function buildWorld(scene, renderer) {
     { from: -30.2, to: -26.2, sill: 1.3, head: 3.2, glass: true },
   ], dpC);
   L.wallZ(dp.z0 + 0.25, 0.5, dp.x0, dp.x1, 0, dp.h, [], dpC);
-  // 南立面：主入口 + 连排窗
+  // South facade: main entrance + row of windows
   L.wallZ(dp.z1 - 0.25, 0.5, dp.x0, dp.x1, 0, dp.h, [
     { from: 25.6, to: 29.6, sill: 0, head: 3.0, glass: false },
     { from: 31.6, to: 36.6, sill: 1.3, head: 3.2, glass: true },
@@ -526,24 +526,24 @@ export function buildWorld(scene, renderer) {
     { from: 47.4, to: 52.4, sill: 1.3, head: 3.2, glass: true },
   ], dpC);
   L.box(dp.x0 - 0.35, dp.x1 + 0.35, dp.h, dp.h + 0.45, dp.z0 - 0.35, dp.z1 + 0.35, { color: 0x272d35, bucket: 'metal' });
-  // 内部隔墙（西：行政 / 东：调度室）
+  // Interior partition (west: administration / east: dispatch room)
   L.wallX(38.7, 0.6, dp.z0 + 0.5, dp.z1 - 0.5, 0, dp.h - 0.6,
     [{ from: -31.4, to: -28.6, sill: 0, head: 2.4, glass: false }], 0x363f49);
-  // 调度室内部
+  // Dispatch room interior
   L.box(41, 46, 0, 0.86, -34.5, -32.2, { color: 0x4c5762, bucket: 'metal' });
   L.box(48, 53, 0, 0.86, -33.0, -30.6, { color: 0x4c5762, bucket: 'metal' });
-  L.box(44, 50, 0.86, 1.36, -39.4, -38.2, { color: 0x2b333c, bucket: 'metal' }); // 控制台
+  L.box(44, 50, 0.86, 1.36, -39.4, -38.2, { color: 0x2b333c, bucket: 'metal' }); // console
   L.box(41.2, 43.0, 1.0, 1.9, -34.8, -34.4, { color: 0x9fe6ff, bucket: 'metal', collide: false });
   L.box(48.4, 50.2, 1.0, 1.9, -35.2, -34.8, { color: 0x9fe6ff, bucket: 'metal', collide: false });
   L.box(44.4, 49.6, 1.36, 1.5, -39.2, -38.4, { color: 0x7fd0ff, bucket: 'metal', collide: false });
-  // 行政侧
+  // Administration side
   L.box(24, 30, 0, 0.8, -38, -35.6, { color: 0x5a4a37, bucket: 'paint' });
   L.box(24, 30, 0, 0.8, -30, -27.6, { color: 0x5a4a37, bucket: 'paint' });
   L.box(31, 33, 0, 2.0, -41.2, -39.8, { color: 0x4b5560, bucket: 'metal' });
-  L.sign('MERIDIAN PORT AUTHORITY', '港区调度 DISPATCH', 26.5, 4.0, -19.6, 10, 2.6, 0, { code: 'OP-D1' });
-  L.sign('TALOS SICHERHEIT', '夜班值守', 55.6, 3.2, -30, 7, 2, Math.PI / 2, { code: 'SEC-07', accent: '#e8c247' });
+  L.sign('MERIDIAN PORT AUTHORITY', 'PORT DISPATCH', 26.5, 4.0, -19.6, 10, 2.6, 0, { code: 'OP-D1' });
+  L.sign('TALOS SICHERHEIT', 'NIGHT WATCH', 55.6, 3.2, -30, 7, 2, Math.PI / 2, { code: 'SEC-07', accent: '#e8c247' });
 
-  /* ---------------- 集装箱堆场 ---------------- */
+  /* ---------------- Container yard ---------------- */
   const CONT_COLORS = [0x3c5a52, 0x6b4a3a, 0x39506b, 0x5c5f66, 0x6d6238, 0x47394f];
   const container = (x, z, rot, levels, ci) => {
     const LEN = 12.2, WID = 2.44, HGT = 2.59;
@@ -557,24 +557,24 @@ export function buildWorld(scene, renderer) {
     return { x, z, rot, levels };
   };
   const containers = [];
-  // 西侧墙列（沿 Z）
+  // West row (along Z)
   containers.push(container(-9.2, -46, Math.PI / 2, 2, 0));
   containers.push(container(-9.2, -32, Math.PI / 2, 2, 2));
   containers.push(container(-9.2, -18, Math.PI / 2, 1, 4));
   containers.push(container(-9.2, -5, Math.PI / 2, 2, 1));
-  // 东侧墙列
+  // East row
   containers.push(container(9.2, -50, Math.PI / 2, 2, 3));
   containers.push(container(9.2, -36, Math.PI / 2, 2, 5));
   containers.push(container(9.2, -22, Math.PI / 2, 1, 2));
   containers.push(container(9.2, -9, Math.PI / 2, 2, 0));
-  // 外侧堆
+  // Outer stacks
   containers.push(container(-15.4, -14, 0, 2, 4));
   containers.push(container(-15.4, -11, 0, 1, 5));
   containers.push(container(14.2, -44, 0, 1, 1));
   containers.push(container(14.2, -58, 0, 2, 3));
   containers.push(container(-15.0, -58, 0, 1, 2));
   containers.push(container(-27.0, -58, 0, 2, 5));
-  // 场外散堆
+  // Loose stacks outside the yard
   containers.push(container(20.0, 0.5, 0, 2, 0));
   containers.push(container(33.0, 0.5, 0, 1, 3));
   containers.push(container(-30.0, 12.0, Math.PI / 2, 2, 1));
@@ -584,10 +584,10 @@ export function buildWorld(scene, renderer) {
   containers.push(container(-40.0, 22.0, Math.PI / 2, 1, 0));
   containers.push(container(34.0, 46.0, 0, 2, 3));
   containers.push(container(46.0, 44.0, Math.PI / 2, 2, 1));
-  // 醒目编号贴片
+  // High-visibility number decals
   const codes = ['KRGU 214 388-7', 'KRGU 771 042-3', 'KRGU 508 619-1', 'KRGU 330 774-5', 'KRGU 662 190-8'];
   const decalMat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.24 });
-  const decalGeo = new THREE.PlaneGeometry(11.4, 2.1);   // 所有贴片尺寸相同，几何体共享
+  const decalGeo = new THREE.PlaneGeometry(11.4, 2.1);   // all decals are the same size, so the geometry is shared
   containers.slice(0, 9).forEach((c, i) => {
     const t = TX.containerCodeTexture('#' + new THREE.Color(CONT_COLORS[i % 6]).getHexString(), codes[i % codes.length]);
     const mm = decalMat.clone(); mm.map = t;
@@ -600,12 +600,12 @@ export function buildWorld(scene, renderer) {
     }
   });
 
-  /* ---------------- 龙门吊 ---------------- */
+  /* ---------------- Gantry crane ---------------- */
   const craneZ0 = -62.5, craneZ1 = -50.5;
   for (const cz of [craneZ0, craneZ1]) {
     L.box(-30.0, -28.2, 0, 17, cz - 0.9, cz + 0.9, { color: 0x6c757e, bucket: 'metal' });
     L.box(28.2, 30.0, 0, 17, cz - 0.9, cz + 0.9, { color: 0x6c757e, bucket: 'metal' });
-    // 行走轮
+    // Travel wheels
     for (const lx of [-29.1, 29.1]) {
       for (const dz of [-2.4, 2.4]) {
         L.cyl(lx, 0.55, cz + dz, 0.55, 0.6, { color: 0x2b3036, collide: false, lowPoly: true });
@@ -614,13 +614,13 @@ export function buildWorld(scene, renderer) {
   }
   L.box(-31, 31, 16.4, 17.4, craneZ0 - 1.2, craneZ1 + 1.2, { color: 0x6c757e, bucket: 'metal' });
   L.box(-31, 31, 17.4, 18.0, -60.0, -53.0, { color: 0x59626b, bucket: 'metal', collide: false });
-  // 吊具
+  // Spreader
   L.box(-2.2, 2.2, 12.4, 14.0, -58.6, -54.4, { color: 0xb0563a, bucket: 'metal', collide: false });
   L.box(-0.35, 0.35, 14.0, 16.4, -56.9, -56.2, { color: 0x39424a, bucket: 'metal', collide: false });
   L.box(-0.35, 0.35, 14.0, 16.4, -54.9, -54.2, { color: 0x39424a, bucket: 'metal', collide: false });
-  L.sign('NORDBRÜCKE CRANE CO.', 'GANTRY 04 · 门机', -28.6, 12.0, -56.5, 9, 2.4, -Math.PI / 2, { code: 'CR-04', accent: '#ffd479' });
+  L.sign('NORDBRÜCKE CRANE CO.', 'GANTRY 04 · CRANE', -28.6, 12.0, -56.5, 9, 2.4, -Math.PI / 2, { code: 'CR-04', accent: '#ffd479' });
 
-  /* ---------------- 货轮（远景剪影） ---------------- */
+  /* ---------------- Cargo ship (distant silhouette) ---------------- */
   const shipTex = TX.shipHullTexture();
   const shipMat = new THREE.MeshStandardMaterial({ map: shipTex, roughness: 0.75, metalness: 0.35, color: 0x8c9aa6 });
   const hull = new THREE.Mesh(new THREE.BoxGeometry(150, 13, 22), shipMat);
@@ -633,7 +633,7 @@ export function buildWorld(scene, renderer) {
     new THREE.MeshStandardMaterial({ color: 0x1d232a, roughness: 0.8, metalness: 0.3 }));
   fun.position.set(42, 26, -104);
   scene.add(fun);
-  /* 几何体与材质提到循环外：原先 5 次迭代各建一份完全相同的 BoxGeometry+Material */
+  /* Geometry and material hoisted out of the loop: the 5 iterations used to build identical BoxGeometry+Material each time */
   const mastGeo = new THREE.BoxGeometry(0.6, 12, 0.6);
   const mastMat = new THREE.MeshStandardMaterial({ color: 0x232a31, roughness: .8, metalness: .4 });
   for (let i = 0; i < 5; i++) {
@@ -649,19 +649,19 @@ export function buildWorld(scene, renderer) {
   shipName.position.set(-6, 6, -92.8);
   scene.add(shipName);
 
-  /* ---------------- 哨亭 / 道具 ---------------- */
+  /* ---------------- Guard booth / props ---------------- */
   L.box(11, 17.4, 0, 3.2, 38, 43.6, { color: 0x39424c });
   L.box(11, 17.4, 0.0, 0.2, 38, 43.6, { color: 0x2c333c, collide: false, bucket: 'concrete' });
   L.box(10.6, 17.8, 3.2, 3.6, 37.6, 44.0, { color: 0x272d35, bucket: 'metal', collide: false });
   L.box(11.0, 17.4, 1.1, 2.6, 37.9, 38.0, { bucket: 'glass', collide: true, opaque: false, tag: 'glass' });
-  L.sign('TALOS SICHERHEIT', 'GATE 1 · 南门', 10.7, 2.2, 40.8, 3.4, 1.1, -Math.PI / 2, { code: 'G1', glow: false });
-  // 闸机与路障
+  L.sign('TALOS SICHERHEIT', 'GATE 1 · SOUTH GATE', 10.7, 2.2, 40.8, 3.4, 1.1, -Math.PI / 2, { code: 'G1', glow: false });
+  // Turnstiles and barriers
   L.box(-7.4, -5.6, 0, 1.1, 49.4, 50.6, { color: 0x3a4249, bucket: 'concrete' });
   L.box(5.6, 7.4, 0, 1.1, 49.4, 50.6, { color: 0x3a4249, bucket: 'concrete' });
   for (const bx of [-9, -3, 3, 9]) {
     L.cyl(bx, 0.6, 47.4, 0.55, 1.2, { color: 0xb9bcc0, collide: true, lowPoly: true });
   }
-  // 装甲车（撤离点）
+  // Armored vehicle (extraction point)
   const apc = { x: 0, z: 54 };
   L.rotBox(apc.x, 1.35, apc.z, 7.4, 2.5, 2.9, 0, { color: 0x2f3a35, bucket: 'paint', tag: 'vehicle' });
   L.rotBox(apc.x, 3.0, apc.z + 0.1, 3.2, 1.1, 2.3, 0, { color: 0x333f39, bucket: 'paint', tag: 'vehicle' });
@@ -669,9 +669,9 @@ export function buildWorld(scene, renderer) {
   for (const wx of [-2.6, 2.6]) for (const wz of [-1.55, 1.55]) {
     L.cyl(apc.x + wx, 0.6, apc.z + wz, 0.6, 0.42, { color: 0x12161a, collide: false, lowPoly: true });
   }
-  L.sign('MPA', '战术警备', apc.x - 3.75, 1.8, apc.z, 2.6, 0.9, -Math.PI / 2, { glow: true, code: 'R-04' });
+  L.sign('MPA', 'TACTICAL SECURITY', apc.x - 3.75, 1.8, apc.z, 2.6, 0.9, -Math.PI / 2, { glow: true, code: 'R-04' });
 
-  // 叉车
+  // Forklift
   const fkX = 3.4, fkZ = -29;
   L.rotBox(fkX, 0.75, fkZ, 2.6, 1.5, 1.5, 0.35, { color: 0xc08a2e, bucket: 'paint', tag: 'prop' });
   L.rotBox(fkX + 0.2, 2.1, fkZ - 0.1, 1.5, 1.4, 1.2, 0.35, { color: 0x2a3038, bucket: 'metal', tag: 'prop', collide: false });
@@ -679,7 +679,7 @@ export function buildWorld(scene, renderer) {
   for (const wx of [-0.7, 0.9]) for (const wz of [-0.8, 0.8]) {
     L.cyl(fkX + wx * 0.9, 0.42, fkZ + wz * 0.9, 0.42, 0.32, { color: 0x11151a, collide: false, lowPoly: true });
   }
-  // 托盘 / 油桶 / 缆盘 / 轮胎
+  // Pallets / drums / cable reels / tires
   for (let i = 0; i < 26; i++) {
     const x = rng.range(-66, 66), z = rng.range(-58, 46);
     const kind = rng.next();
@@ -697,7 +697,7 @@ export function buildWorld(scene, renderer) {
     }
   }
 
-  /* ---------------- 路灯 ---------------- */
+  /* ---------------- Street lights ---------------- */
   const lampSpots = [
     [-17.5, -52, 0], [16, -52, 0], [-17.5, -26, 0], [16, -26, 0],
     [-17.5, 2, 0], [16, 2, 0], [0, 22, 0], [-34, 12, 0],
@@ -714,25 +714,25 @@ export function buildWorld(scene, renderer) {
     L.box(x - 0.5, x + 0.5, 9.2, 9.45, z - 0.5, z + 0.5, { color: 0x2c3238, bucket: 'metal', collide: false });
     L.box(x - 0.45, x + 0.45, 8.95, 9.2, z - 0.45, z + 0.45,
       { color: 0xffd39a, bucket: 'lamp', collide: false });
-    const sp = new THREE.Sprite(lampGlowMat);   // 11 盏灯的辉光完全一致，无需逐盏 clone
+    const sp = new THREE.Sprite(lampGlowMat);   // all 11 lamps share identical glow, no per-lamp clone needed
     sp.position.set(x, 9.0, z);
     sp.scale.set(7, 7, 1);
     scene.add(sp);
   });
 
-  /* ---------------- 水洼 ---------------- */
+  /* ---------------- Puddles ---------------- */
   const puddleMat = new THREE.MeshStandardMaterial({
     color: 0x070d13, roughness: 0.03, metalness: 1.0, transparent: true, opacity: 0.9,
     envMapIntensity: 2.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    /* 合并后的三角形绕序取决于水洼自身的朝向，单面渲染会随机漏面；
-       水平面片开双面几乎不增加开销。 */
+    /* The winding order of the merged triangles depends on each puddle's own orientation, so single-sided rendering randomly drops faces;
+       making a flat horizontal patch double-sided costs almost nothing. */
     side: THREE.DoubleSide,
   });
-  /* 46 个独立 Mesh 意味着 46 次透明 draw call，且每帧都要参与透明排序。
-     这里在构建期把它们烘成一个合并几何体，运行期只剩 1 次 draw call。
-     每个水洼是一个半径 r、沿局部 Y 缩放 sy、再绕 Z 旋转 φ 的圆：
-     CircleGeometry 位于 XY 平面朝 +Z，经 rotation.x = -90° 后落到地面，
-     局部 (x, y, 0) → 世界 (x, 0, -y)，所以这里直接按该映射算世界顶点。 */
+  /* 46 separate Meshes meant 46 transparent draw calls and per-frame transparent sorting.
+     Here they are baked into one merged geometry at build time, leaving 1 draw call at runtime.
+     Each puddle is a circle of radius r, scaled along local Y by sy then rotated around Z by φ:
+     CircleGeometry lies in the XY plane facing +Z and lands on the ground after rotation.x = -90°,
+     mapping local (x, y, 0) → world (x, 0, -y), so world vertices are computed directly from that mapping. */
   {
     const SEG = 14, N = 46;
     const pos = new Float32Array(N * SEG * 3 * 3);
@@ -742,7 +742,7 @@ export function buildWorld(scene, renderer) {
       const cx = rng.range(-68, 68), cz = rng.range(-62, 48);
       const r = rng.range(0.7, 3.6);
       const phi = rng.range(0, 6.28), sy = rng.range(0.5, 1.0);
-      const cy = 0.012 + i * 0.00005;          // 逐片微抬，避免互相 z-fighting
+      const cy = 0.012 + i * 0.00005;          // lift each patch slightly to avoid z-fighting between them
       const cosP = Math.cos(phi), sinP = Math.sin(phi);
       for (let k = 0; k < SEG; k++) {
         const a0 = (k / SEG) * 6.283185307179586;
@@ -759,14 +759,14 @@ export function buildWorld(scene, renderer) {
     const puddleGeo = new THREE.BufferGeometry();
     puddleGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     puddleGeo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-    /* 保留视锥裁剪：three 会按需计算包围球。整片水洼横跨场地，
-       面向场地时基本不会被裁掉，但背对时可以整体剔除。
-       （不要图省事写 frustumCulled=false —— 那会让 644 个三角形每帧都提交。） */
+    /* Keep frustum culling: three computes a bounding sphere as needed. The merged puddle field spans the site,
+       so it is rarely culled while facing the yard, but can be culled entirely when facing away.
+       (Do not take the lazy route of frustumCulled=false — that submits 644 triangles every frame.) */
     const puddles = new THREE.Mesh(puddleGeo, puddleMat);
     scene.add(puddles);
   }
 
-  /* ---------------- 贴花：地面标线 ---------------- */
+  /* ---------------- Decals: ground markings ---------------- */
   const lineMat = new THREE.MeshBasicMaterial({ color: 0xc9d3d8, transparent: true, opacity: 0.16 });
   for (let i = -3; i <= 3; i++) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 108), lineMat);
@@ -775,7 +775,7 @@ export function buildWorld(scene, renderer) {
     scene.add(m);
   }
 
-  /* ---------------- 灯光 ---------------- */
+  /* ---------------- Lighting ---------------- */
   const hemi = new THREE.HemisphereLight(0x35506a, 0x0a0e13, 0.58);
   scene.add(hemi);
   const moon = new THREE.DirectionalLight(0x9dc3e6, 0.54);
@@ -801,16 +801,16 @@ export function buildWorld(scene, renderer) {
     scene.add(pl);
     lampLights.push(pl);
   });
-  // 建筑内部补光
+  // Interior fill lights
   const fillA = new THREE.PointLight(0xcfe6ff, 42, 34, 1.9); fillA.position.set(-46, 6.5, -10); scene.add(fillA);
   const fillD = new THREE.PointLight(0xa8dcff, 46, 34, 1.9); fillD.position.set(44, 5.0, -32); scene.add(fillD);
   const fillB = new THREE.PointLight(0xbfe2ff, 36, 32, 1.9); fillB.position.set(36, 6.0, 22); scene.add(fillB);
   const fillOff = new THREE.PointLight(0xffe0b0, 16, 16, 2.0); fillOff.position.set(-28, 2.7, -21.4); scene.add(fillOff);
 
-  /* ---------------- 构建批次 ---------------- */
+  /* ---------------- Build batches ---------------- */
   const batchMeshes = L.batch.build(mats, scene, true, true);
 
-  /* ---------------- 掩体点 ---------------- */
+  /* ---------------- Cover points ---------------- */
   const covers = [];
   const coverIdx = new Grid(6);
   for (const b of grid.boxes) {
@@ -848,27 +848,27 @@ export function buildWorld(scene, renderer) {
     }
   }
 
-  /* ---------------- 任务点 / 区域 ---------------- */
+  /* ---------------- Objectives / zones ---------------- */
   const objectives = {
-    manifest: { x: -29.4, z: -23.4, label: '货运货单', zone: 'BAY 3 办公室' },
-    evidence: { x: 47.0, z: -36.6, label: '调度室证据', zone: '港区调度楼' },
-    extract: { x: 0, z: 53, label: '撤离点', zone: '南门装甲车' },
+    manifest: { x: -29.4, z: -23.4, label: 'Cargo manifest', zone: 'BAY 3 office' },
+    evidence: { x: 47.0, z: -36.6, label: 'Dispatch evidence', zone: 'Port dispatch building' },
+    extract: { x: 0, z: 53, label: 'Extraction point', zone: 'South gate armored vehicle' },
   };
-  const safeZone = { x0: -10, x1: 10, z0: 42, z1: 50, label: '南门集结区' };
+  const safeZone = { x0: -10, x1: 10, z0: 42, z1: 50, label: 'South gate rally point' };
 
-  /* short 供小地图使用（空间小，只放中文短名）；label 供战术地图使用 */
+  /* short is used by the minimap (little space, short names only); label is used by the tactical map */
   const zones = [
-    { x0: -72, x1: 72, z0: 42, z1: 50, label: '南门 / GATE 1', short: '南门', kind: 'gate' },
-    { x0: -18, x1: 18, z0: -60, z1: 8, label: '集装箱堆场 / YARD', short: '堆场', kind: 'yard' },
-    { x0: -64, x1: -20, z0: -26, z1: 4, label: '三号仓 / BAY 3', short: '三号仓', kind: 'building' },
-    { x0: -34, x1: -21.2, z0: -25.4, z1: -17.4, label: 'BAY 3 办公室', short: '办公室', kind: 'room' },
-    { x0: 18, x1: 62, z0: 6, z1: 40, label: '冷库 / KÜHLHAUS', short: '冷库', kind: 'building' },
-    { x0: 22, x1: 54, z0: -42, z1: -20, label: '调度楼 / DISPATCH', short: '调度楼', kind: 'building' },
-    { x0: 39, x1: 54, z0: -42, z1: -20, label: '调度室', short: '调度室', kind: 'room' },
-    { x0: -72, x1: 72, z0: -66, z1: -50, label: '三号泊位 / BERTH 3', short: '三号泊位', kind: 'quay' },
+    { x0: -72, x1: 72, z0: 42, z1: 50, label: 'SOUTH GATE / GATE 1', short: 'SOUTH GATE', kind: 'gate' },
+    { x0: -18, x1: 18, z0: -60, z1: 8, label: 'CONTAINER YARD', short: 'YARD', kind: 'yard' },
+    { x0: -64, x1: -20, z0: -26, z1: 4, label: 'BAY 3 WAREHOUSE', short: 'BAY 3', kind: 'building' },
+    { x0: -34, x1: -21.2, z0: -25.4, z1: -17.4, label: 'BAY 3 OFFICE', short: 'OFFICE', kind: 'room' },
+    { x0: 18, x1: 62, z0: 6, z1: 40, label: 'KÜHLHAUS COLD STORE', short: 'COLD STORE', kind: 'building' },
+    { x0: 22, x1: 54, z0: -42, z1: -20, label: 'DISPATCH BUILDING', short: 'DISPATCH', kind: 'building' },
+    { x0: 39, x1: 54, z0: -42, z1: -20, label: 'DISPATCH ROOM', short: 'DISPATCH ROOM', kind: 'room' },
+    { x0: -72, x1: 72, z0: -66, z1: -50, label: 'BERTH 3', short: 'BERTH 3', kind: 'quay' },
   ];
 
-  /* ---------------- 出生点 ---------------- */
+  /* ---------------- Spawn points ---------------- */
   const spawns = {
     player: { x: 0, z: 43.5, yaw: 0 },
     squad: [
@@ -879,38 +879,38 @@ export function buildWorld(scene, renderer) {
     ],
   };
 
-  /* ---------------- 嫌疑人 ---------------- */
+  /* ---------------- Suspects ---------------- */
   const suspects = [
-    { id: 'S1', name: '白鹭-1', patrol: [[-4, -50], [5, -44], [-6, -38]], speed: 1.25 },
-    { id: 'S2', name: '白鹭-2', patrol: [[6, -30], [-2, -23], [6, -14]], speed: 1.15 },
-    { id: 'S3', name: '白鹭-3', patrol: [[-32, -10], [-52, -8], [-48, 0], [-26, -5]], speed: 1.1 },
-    { id: 'S4', name: '白鹭-4', post: [-24.6, -20.6], speed: 1.0, elite: true },
-    { id: 'S5', name: '白鹭-5', post: [41.6, -25.6], speed: 1.0 },
-    { id: 'S6', name: '白鹭-6', patrol: [[49, -38], [26, -38], [27, -24]], speed: 1.2 },
-    { id: 'S7', name: '白鹭-7', patrol: [[-14, -57], [10, -57], [16, -47]], speed: 1.25 },
-    { id: 'S8', name: '白鹭-8', patrol: [[24, 12], [52, 14], [50, 34], [26, 32]], speed: 1.1 },
-    { id: 'S9', name: '白鹭-9', post: [19, 34], speed: 1.0, rear: true },
+    { id: 'S1', name: 'EGRET-1', patrol: [[-4, -50], [5, -44], [-6, -38]], speed: 1.25 },
+    { id: 'S2', name: 'EGRET-2', patrol: [[6, -30], [-2, -23], [6, -14]], speed: 1.15 },
+    { id: 'S3', name: 'EGRET-3', patrol: [[-32, -10], [-52, -8], [-48, 0], [-26, -5]], speed: 1.1 },
+    { id: 'S4', name: 'EGRET-4', post: [-24.6, -20.6], speed: 1.0, elite: true },
+    { id: 'S5', name: 'EGRET-5', post: [41.6, -25.6], speed: 1.0 },
+    { id: 'S6', name: 'EGRET-6', patrol: [[49, -38], [26, -38], [27, -24]], speed: 1.2 },
+    { id: 'S7', name: 'EGRET-7', patrol: [[-14, -57], [10, -57], [16, -47]], speed: 1.25 },
+    { id: 'S8', name: 'EGRET-8', patrol: [[24, 12], [52, 14], [50, 34], [26, 32]], speed: 1.1 },
+    { id: 'S9', name: 'EGRET-9', post: [19, 34], speed: 1.0, rear: true },
   ];
 
-  /* ---------------- 平民 ---------------- */
+  /* ---------------- Civilians ---------------- */
   const civilians = [
-    { id: 'C1', x: 1.5, z: -27.0, label: '夜班装卸工' },
-    { id: 'C2', x: -46.0, z: -12.0, label: '仓库理货员' },
-    { id: 'C3', x: 34.0, z: 25.0, label: '冷库值班员' },
-    { id: 'C4', x: -10.5, z: 15.0, label: '夜间巡场工' },
+    { id: 'C1', x: 1.5, z: -27.0, label: 'Night-shift loader' },
+    { id: 'C2', x: -46.0, z: -12.0, label: 'Warehouse handler' },
+    { id: 'C3', x: 34.0, z: 25.0, label: 'Cold-store operator' },
+    { id: 'C4', x: -10.5, z: 15.0, label: 'Night yard patrol' },
   ];
 
-  /* ---------------- 更新 ---------------- */
+  /* ---------------- Update ---------------- */
   let t = 0;
-  /* 阴影贴图的纹素尺寸：阴影相机跟随相机移动时必须按它对齐。
-     不对齐的话光源每帧都在做亚纹素移动，导致阴影边缘持续抖动（shimmer）
-     且与静态几何之间出现游移的锯齿。 */
+  /* Shadow-map texel size: the shadow camera must snap to it while following the view camera.
+     Without snapping, the light moves by sub-texel amounts every frame, causing constant shadow-edge shimmer
+     and crawling jaggies against static geometry. */
   const SHADOW_TEXEL = (moon.shadow.camera.right - moon.shadow.camera.left) / moon.shadow.mapSize.x;
 
   function update(dt, camPos) {
     t += dt;
-    /* 阴影相机跟随：锚点量化到纹素网格，光源与目标的相对偏移保持不变
-       （平行光方向恒定），阴影贴图内容因此不会逐帧游移。 */
+    /* Shadow camera follow: the anchor is quantized to the texel grid, keeping the light-to-target offset constant
+       (directional light direction is fixed), so shadow-map content does not crawl frame to frame. */
     const ax = Math.round(camPos.x / SHADOW_TEXEL) * SHADOW_TEXEL;
     const az = Math.round(camPos.z / SHADOW_TEXEL) * SHADOW_TEXEL;
     moon.position.set(ax + 38, 62, az - 26);
@@ -921,7 +921,7 @@ export function buildWorld(scene, renderer) {
   return {
     grid, level: L, batchMeshes, mats, covers, coverIdx,
     objectives, zones, safeZone, spawns, suspects, civilians, containers,
-    skyTex, envRT,                       // 不在场景图内，交由 disposeMission 释放
+    skyTex, envRT,                       // not in the scene graph; released by disposeMission
     lights: { hemi, moon, lampLights, fills: [fillA, fillB, fillD] },
     update,
     bounds: WORLD.bounds,

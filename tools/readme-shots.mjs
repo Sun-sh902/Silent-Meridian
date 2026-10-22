@@ -1,12 +1,12 @@
 /* ============================================================
-   tools/readme-shots.mjs — 为 README 生成真实截图（人工流程，不进 run-all）
+   tools/readme-shots.mjs — generate real screenshots for the README (manual workflow; not in run-all)
    ------------------------------------------------------------
-   用法： node tools/readme-shots.mjs [--out docs/shots] [--port 8197]
+   Usage: node tools/readme-shots.mjs [--out docs/shots] [--port 8197]
 
-   真实启动游戏，按用户路径走一遍界面并截图：
-     01-title  主菜单     02-briefing 行动简报   03-loadout  装备配置
-     04-yard   港区行动   05-tacmap   战术地图   06-debrief  战果
-   依赖仓库已有的 puppeteer-core + 本机 Chrome，不新增依赖。
+   Really launches the game, walks the user path through each screen and captures:
+     01-title  main menu      02-briefing operation briefing   03-loadout  loadout
+     04-yard   port operation 05-tacmap   tactical map         06-debrief  debrief
+   Relies on the repository's existing puppeteer-core + local Chrome; adds no dependencies.
    ============================================================ */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -33,16 +33,16 @@ async function shoot(name) {
   await page.screenshot({ path: file, type: 'png' });
   const shown = await page.evaluate(() => {
     const el = document.querySelector('.screen:not(.hidden)');
-    return el ? el.id : '(无全屏界面)';
+    return el ? el.id : '(no full-screen UI)';
   });
   suite.info(`${name}.png`, shown);
   return file;
 }
 
 /**
- * 点界面上真实存在的按钮。
- * 优先用真实鼠标点击（能命中自己才算数）；元素在滚动区下方露不出来时退回 DOM click，
- * 并报告用的是哪条路径——截图脚本只关心界面能被驱动，不替代 click-test 的命中率断言。
+ * Click a button that actually exists in the interface.
+ * Prefer a real mouse click (only a hit on itself counts); if the element cannot be exposed below a scroll area, fall back to a DOM click
+ * and report which path was used — the screenshot script only cares that the UI can be driven, and does not replace click-test's hit-rate assertions.
  */
 async function click(sel) {
   const state = await page.evaluate((s) => {
@@ -88,27 +88,27 @@ const boot = await page.evaluate(() => ({
   actions: document.querySelectorAll('[data-action]').length,
 }));
 if (!boot.game || boot.actions === 0) {
-  console.error('[shots] 游戏脚本未运行，放弃截图');
+  console.error('[shots] Game script did not run; giving up on screenshots');
   await suite.finish();
 }
 
-await step('01 主菜单', async () => {
+await step('01 Main menu', async () => {
   await shoot('01-title');
   return '1600x900';
 });
 
-await step('02 行动简报', async () => {
+await step('02 Operation briefing', async () => {
   await click('[data-action="screen"][data-screen="briefing"]');
   await wait(900);
-  if (!(await screenOn('#screen-briefing'))) throw new Error('简报未显示');
+  if (!(await screenOn('#screen-briefing'))) throw new Error('Briefing did not appear');
   return await shoot('02-briefing');
 });
 
-await step('03 装备配置', async () => {
+await step('03 Loadout', async () => {
   await click('#screen-briefing [data-action="screen"][data-screen="loadout"]');
   await wait(900);
-  if (!(await screenOn('#screen-loadout'))) throw new Error('配装未显示');
-  // 选一套看得清配置的方案，让截图不至于停留在默认值
+  if (!(await screenOn('#screen-loadout'))) throw new Error('Loadout did not appear');
+  // Pick a visibly different configuration so the screenshot is not just the defaults
   await click('#primary-list .pick[data-id="vk12"]');
   await wait(250);
   await click('#gadget-list .pick[data-id="smoke"]');
@@ -116,12 +116,12 @@ await step('03 装备配置', async () => {
   return await shoot('03-loadout');
 });
 
-await step('04 港区行动', async () => {
-  if (!(await click('#btn-deploy'))) throw new Error('找不到「进入港区」按钮');
+await step('04 Port operation', async () => {
+  if (!(await click('#btn-deploy'))) throw new Error('Could not find the "Enter the port" button');
   await wait(4200);
   const st = await page.evaluate(() => window.__game.state);
-  if (st !== 'play') throw new Error('未进入行动状态：' + st);
-  // 把准星放平、镜头对准仓区，避免截到地面
+  if (st !== 'play') throw new Error('Did not enter the operation state: ' + st);
+  // Level the crosshair and aim at the warehouse district to avoid capturing the ground
   await page.evaluate(() => {
     const g = window.__game;
     g.player.pitch = -0.04;
@@ -131,15 +131,15 @@ await step('04 港区行动', async () => {
   return await shoot('04-yard');
 });
 
-await step('05 战术地图', async () => {
+await step('05 Tactical map', async () => {
   await page.keyboard.press('Tab');
   await wait(1500);
-  if (!(await page.evaluate(() => window.__game.tacmap.open))) throw new Error('战术地图未打开');
+  if (!(await page.evaluate(() => window.__game.tacmap.open))) throw new Error('Tactical map did not open');
   return await shoot('05-tacmap');
 });
 
-await step('06 战果结算', async () => {
-  // 先退出战术地图，否则结算界面会压在还开着的 3D 场景 / 地图上
+await step('06 Debrief', async () => {
+  // Exit the tactical map first, or the debrief will sit on top of the still-open 3D scene / map
   await page.evaluate(() => {
     const g = window.__game;
     if (g.tacmap && g.tacmap.open) g.toggleTacMap();
@@ -148,16 +148,16 @@ await step('06 战果结算', async () => {
   await page.evaluate(() => {
     const g = window.__game;
     g.screens.showDebrief({
-      success: true, grade: 'A', comment: '流程干净、节奏克制。小队的推进与火力纪律都符合警备处的标准作业程序。',
+      success: true, grade: 'A', comment: 'Clean process and restrained tempo. The squad\'s movement and fire discipline met the Security Office standard operating procedure.',
       time: '7:24', shots: 61, accuracy: 38, blindShots: 3, detained: 3, killed: 1, escaped: 0,
       suspectTotal: 9, civSafe: 4, civLost: 0, civTotal: 4, orders: 11, squadDown: 0, gadgets: 2,
       objectives: { manifest: 'done', evidence: 'done', civilians: 'done', suspects: 'done', extract: 'done' },
       squad: [
-        { callsign: 'LEAD', role: '制式防弹背心', alive: true, hp: 96, maxHp: 120 },
-        { callsign: 'ARDEN-2', role: 'RIFLEMAN · 侦察', alive: true, hp: 118, maxHp: 130 },
-        { callsign: 'BRAM-3', role: 'RIFLEMAN · 火力', alive: true, hp: 74, maxHp: 130 },
-        { callsign: 'CIRA-4', role: 'BREACHER · 突击', alive: true, hp: 130, maxHp: 130 },
-        { callsign: 'DOV-5', role: 'MEDIC · 支援', alive: true, hp: 101, maxHp: 130 },
+        { callsign: 'LEAD', role: 'Standard Ballistic Vest', alive: true, hp: 96, maxHp: 120 },
+        { callsign: 'ARDEN-2', role: 'RIFLEMAN · Scout', alive: true, hp: 118, maxHp: 130 },
+        { callsign: 'BRAM-3', role: 'RIFLEMAN · Support', alive: true, hp: 74, maxHp: 130 },
+        { callsign: 'CIRA-4', role: 'BREACHER · Assault', alive: true, hp: 130, maxHp: 130 },
+        { callsign: 'DOV-5', role: 'MEDIC · Support', alive: true, hp: 101, maxHp: 130 },
       ],
     });
     g.screens.show('debrief');
@@ -167,27 +167,27 @@ await step('06 战果结算', async () => {
   return await shoot('06-debrief');
 });
 
-/* 记录本次截图的来源提交，方便日后核对是否过期 */
+/* Record the source version of this screenshot run so it can be checked for staleness later */
 const head = await page.evaluate(() => 'v' + (window.__SM_DEBUG && window.__SM_DEBUG.build ? window.__SM_DEBUG.build : '?'));
 await writeFile(
   join(OUT, 'README.md'),
   [
-    '# docs/shots — README 截图',
+    '# docs/shots — README screenshots',
     '',
-    '由 `node tools/readme-shots.mjs` 真实运行游戏后生成，不是手绘示意图。',
+    'Generated by actually running the game via `node tools/readme-shots.mjs`; not hand-drawn mockups.',
     '',
-    '| 文件 | 界面 |',
+    '| File | Screen |',
     '| --- | --- |',
-    '| `01-title.png` | 主菜单 |',
-    '| `02-briefing.png` | 行动简报 |',
-    '| `03-loadout.png` | 装备配置 |',
-    '| `04-yard.png` | 港区行动（HUD / 小队 / 状态条） |',
-    '| `05-tacmap.png` | 战术地图（Tab） |',
-    '| `06-debrief.png` | 战果结算 |',
+    '| `01-title.png` | Main menu |',
+    '| `02-briefing.png` | Operation briefing |',
+    '| `03-loadout.png` | Loadout |',
+    '| `04-yard.png` | Port operation (HUD / squad / status bar) |',
+    '| `05-tacmap.png` | Tactical map (Tab) |',
+    '| `06-debrief.png` | Debrief |',
     '',
-    '重新生成：`node tools/readme-shots.mjs`（会用本机 Chrome 跑一遍真实界面）。',
+    'Regenerate with `node tools/readme-shots.mjs` (drives the real interface in local Chrome).',
     '',
-    `生成时页面版本：${head}`,
+    `Page version at generation time: ${head}`,
     '',
   ].join('\n'),
 );

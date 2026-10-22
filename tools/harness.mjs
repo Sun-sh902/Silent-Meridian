@@ -1,12 +1,12 @@
 /* ============================================================
-   harness.mjs - 共用测试骨架
+   harness.mjs - shared test harness
    ------------------------------------------------------------
-   解决的问题：
-     1) Chrome 路径不再硬编码：CHROME_PATH 环境变量优先，其次自动探测；
-        全部找不到时给出明确提示并以退出码 2 结束，而不是抛栈。
-     2) 页面未捕获异常 / console.error 一律计入失败并影响退出码，
-        避免「页面在刷 TypeError 而测试照样全绿」。
-     3) 统一 results 打印、统一收尾（关浏览器、关服务、退出码）。
+   Problems solved:
+     1) Chrome path is no longer hardcoded: CHROME_PATH env var first, then auto-detection;
+        if nothing is found, print a clear message and exit with code 2 instead of throwing a stack.
+     2) Uncaught page errors / console.error always count as failures and affect the exit code,
+        avoiding "the page is spewing TypeErrors while the tests stay green".
+     3) Uniform results printing and cleanup (close browser, close servers, exit code).
    ============================================================ */
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -17,7 +17,7 @@ import puppeteer from 'puppeteer-core';
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/* ---------------- Chrome 定位 ---------------- */
+/* ---------------- Chrome discovery ---------------- */
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -35,16 +35,16 @@ const CHROME_CANDIDATES = [
 export function resolveChromePath() {
   for (const p of CHROME_CANDIDATES) { if (p && existsSync(p)) return p; }
   console.error('');
-  console.error('[harness] 找不到可用的 Chrome / Chromium 可执行文件。');
-  console.error('  请用环境变量 CHROME_PATH 指定，例如：');
+  console.error('[harness] No usable Chrome / Chromium executable found.');
+  console.error('  Specify one with the CHROME_PATH environment variable, for example:');
   console.error('    CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm test');
-  console.error('  已尝试的路径：');
+  console.error('  Paths tried:');
   for (const p of CHROME_CANDIDATES) console.error('    - ' + p);
   console.error('');
   process.exit(2);
 }
 
-/* ---------------- 静态服务 ---------------- */
+/* ---------------- Static server ---------------- */
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
@@ -65,8 +65,8 @@ export async function startStaticServer({ port, root = ROOT }) {
     server.once('error', (err) => {
       if (err && err.code === 'EADDRINUSE') {
         console.error('');
-        console.error('[harness] 端口 ' + port + ' 已被占用 —— 通常是上一次测试异常退出后残留的服务进程。');
-        console.error('  清理： lsof -ti:' + port + ' | xargs kill');
+        console.error('[harness] Port ' + port + ' is already in use — usually a leftover server process from a test that exited abnormally.');
+        console.error('  Clean up: lsof -ti:' + port + ' | xargs kill');
         console.error('');
         process.exit(2);
       }
@@ -74,7 +74,7 @@ export async function startStaticServer({ port, root = ROOT }) {
     });
     server.listen(port, '127.0.0.1', resolve);
   });
-  process.on('exit', () => { try { server.close(); } catch (e) { /* 已关闭 */ } });
+  process.on('exit', () => { try { server.close(); } catch (e) { /* already closed */ } });
   return {
     server,
     url: 'http://127.0.0.1:' + port + '/',
@@ -82,7 +82,7 @@ export async function startStaticServer({ port, root = ROOT }) {
   };
 }
 
-/* ---------------- 测试套件 ---------------- */
+/* ---------------- Test suite ---------------- */
 const BENIGN_CONSOLE = [/favicon/i];
 
 export class Suite {
@@ -110,7 +110,7 @@ export class Suite {
     return this.browser;
   }
 
-  /* 新建页面并自动挂上异常收集 */
+  /* Create a page and attach error collection automatically */
   async newPage() {
     const page = await this.browser.newPage();
     this.pages.push(page);
@@ -137,7 +137,7 @@ export class Suite {
     return !!ok;
   }
 
-  /* 仅记录信息，不计入失败 */
+  /* Info only; does not count as a failure */
   info(name, detail) { this.results.push({ name, ok: true, detail: detail === undefined ? '' : String(detail), info: true }); }
 
   get failures() { return this.checksFailed + (this.failOnPageError ? this.pageErrors.length : 0); }
@@ -151,19 +151,19 @@ export class Suite {
     }
     console.log('');
     if (this.pageErrors.length) {
-      console.log('页面异常 ' + this.pageErrors.length + ' 条（计入失败）：');
+      console.log(this.pageErrors.length + ' page error(s) (counted as failures):');
       this.pageErrors.slice(0, 8).forEach((e) => console.log('   ! ' + e));
-      if (this.pageErrors.length > 8) console.log('   … 另有 ' + (this.pageErrors.length - 8) + ' 条');
+      if (this.pageErrors.length > 8) console.log('   … ' + (this.pageErrors.length - 8) + ' more');
     } else {
-      console.log('页面异常：无');
+      console.log('Page errors: none');
     }
     const total = this.results.filter((r) => !r.info).length;
-    console.log('断言 ' + (total - this.checksFailed) + '/' + total + ' 通过' +
-      (this.pageErrors.length ? '，页面异常 ' + this.pageErrors.length + ' 条' : ''));
+    console.log('Assertions ' + (total - this.checksFailed) + '/' + total + ' passed' +
+      (this.pageErrors.length ? ', page errors: ' + this.pageErrors.length : ''));
     console.log(this.failures ? '[RESULT] FAIL' : '[RESULT] PASS');
-    for (const p of this.pages) { try { await p.close(); } catch (e) { /* 已关闭 */ } }
-    if (this.browser) { try { await this.browser.close(); } catch (e) { /* 已关闭 */ } }
-    for (const s of this.servers) { try { await s.close(); } catch (e) { /* 已关闭 */ } }
+    for (const p of this.pages) { try { await p.close(); } catch (e) { /* already closed */ } }
+    if (this.browser) { try { await this.browser.close(); } catch (e) { /* already closed */ } }
+    for (const s of this.servers) { try { await s.close(); } catch (e) { /* already closed */ } }
     process.exit(this.failures ? 1 : 0);
   }
 }

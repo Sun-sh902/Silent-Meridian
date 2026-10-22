@@ -1,16 +1,16 @@
 /* ============================================================
-   build-info.mjs — 构建输入清单与内容哈希（build.mjs 与 check-dist.mjs 共用）
+   build-info.mjs — build input list and content hashes (shared by build.mjs and check-dist.mjs)
    ------------------------------------------------------------
-   为什么需要它：
-     背景：dist/ 随版本库提交，且 index.html 的 ?v= 只在 V 变化时才更新。
-     改完 src/ 却忘记 node build.mjs 时，file:// 路径会继续跑旧包，
-     而旧包和新鲜包在版本号上完全一样，从外部看不出任何差别。
-     （实际发生过：P0-4 已修复，但 dist 里没有那个修复，
-       于是双击运行的玩家仍然会遇到「暂停→中止→重新部署后整局冻结」。）
+   Why this exists:
+     Background: dist/ is committed to the repository, and index.html's ?v= only changes when V does.
+     If you edit src/ and forget node build.mjs, the file:// path keeps running the old bundle,
+     and the old and fresh bundles have identical version numbers — invisible from the outside.
+     (This actually happened: P0-4 was fixed, but dist/ did not contain the fix,
+       so double-click players still hit "pause → abort → redeploy freezes the whole run".)
 
-   这里用「输入文件内容哈希」而不是 mtime 来判定：
-     mtime 在 git clone / 检出后不可靠（所有文件都是检出时间），
-     内容哈希则精确等于「src 改过没有」。
+   This uses content hashes of input files rather than mtime:
+     mtime is unreliable after git clone / checkout (every file has checkout time),
+     while a content hash precisely answers "did src change?".
    ============================================================ */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/** 参与打包的全部输入，路径一律相对仓库根，便于跨机器比对 */
+/** All inputs that participate in bundling; paths are relative to the repo root for cross-machine comparison */
 export function buildInputs(root = ROOT) {
   const files = [];
   const srcDir = join(root, 'src');

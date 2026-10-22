@@ -1,11 +1,11 @@
 /* ============================================================
-   tuning.js - 实时调参面板
+   tuning.js - live tuning panel
    ------------------------------------------------------------
-   P       : 打开/关闭完整面板（释放指针、时间保持 100%、WASD 仍可移动）
-   O       : 只读悬浮模式（不释放指针，只显示四条曲线与数值）
-   [ / ]   : 悬浮模式下 减小 / 增大 当前选中参数
-   , / .   : 悬浮模式下 切换选中参数
-   拖动滑块与数字框都会直接写入 feel.js，下一帧立即生效。
+   P       : open/close the full panel (releases the pointer, keeps time at 100%, WASD still moves)
+   O       : read-only overlay (does not release the pointer; shows four curves and values)
+   [ / ]   : in overlay mode, decrease / increase the selected parameter
+   , / .   : in overlay mode, cycle the selected parameter
+   Dragging a slider or editing a number box writes straight to feel.js and takes effect next frame.
    ============================================================ */
 import {
   feel, FEEL_SCHEMA, FEEL_PRESETS, PRESET_LABELS,
@@ -24,7 +24,7 @@ export class TuningPanel {
     this.game = game;
     this.open = false;
     this.overlay = false;
-    FEEL_PRESETS.A = snapshotFeel();          // 槽 A 固定为「原始（改动前）」
+    FEEL_PRESETS.A = snapshotFeel();          // slot A is fixed to "Original (pre-change)"
     this._build();
     this._lastDraw = 0;
   }
@@ -35,25 +35,25 @@ export class TuningPanel {
     p.id = 'tuning-panel';
     p.className = 'hidden';
     p.innerHTML = [
-      '<div class="tp-head"><b>手感调参 / FEEL TUNING</b>',
-      '<span class="tp-hint">P 关闭 · O 悬浮 · 数值即时生效</span>',
+      '<div class="tp-head"><b>FEEL TUNING</b>',
+      '<span class="tp-hint">P close · O overlay · values apply instantly</span>',
       '<button type="button" data-tp="close">×</button></div>',
       '<div class="tp-bar">',
-      '<button type="button" data-tp="preset-save" data-slot="A">保存到 A</button>',
-      '<button type="button" data-tp="preset-load" data-slot="A">载入 A（原始）</button>',
-      '<button type="button" data-tp="preset-save" data-slot="B">保存到 B</button>',
-      '<button type="button" data-tp="preset-load" data-slot="B">载入 B</button>',
-      '<button type="button" data-tp="preset-save" data-slot="C">保存到 C</button>',
-      '<button type="button" data-tp="preset-load" data-slot="C">载入 C</button>',
+      '<button type="button" data-tp="preset-save" data-slot="A">Save to A</button>',
+      '<button type="button" data-tp="preset-load" data-slot="A">Load A (original)</button>',
+      '<button type="button" data-tp="preset-save" data-slot="B">Save to B</button>',
+      '<button type="button" data-tp="preset-load" data-slot="B">Load B</button>',
+      '<button type="button" data-tp="preset-save" data-slot="C">Save to C</button>',
+      '<button type="button" data-tp="preset-load" data-slot="C">Load C</button>',
       '<span class="tp-sep"></span>',
-      '<button type="button" data-tp="export">导出 JSON</button>',
-      '<button type="button" data-tp="copy">复制到剪贴板</button>',
+      '<button type="button" data-tp="export">Export JSON</button>',
+      '<button type="button" data-tp="copy">Copy to clipboard</button>',
       '<span class="tp-sep"></span>',
-      '<label class="tp-chk"><input type="checkbox" data-tp="freezeAI"> 冻结敌人 AI</label>',
-      '<label class="tp-chk"><input type="checkbox" data-tp="invincible"> 无敌</label>',
-      '<label class="tp-chk"><input type="checkbox" data-tp="headBob" checked> 头部晃动</label>',
+      '<label class="tp-chk"><input type="checkbox" data-tp="freezeAI"> Freeze enemy AI</label>',
+      '<label class="tp-chk"><input type="checkbox" data-tp="invincible"> Invincible</label>',
+      '<label class="tp-chk"><input type="checkbox" data-tp="headBob" checked> Head bob</label>',
       '<span class="tp-sep"></span>',
-      '<button type="button" data-tp="reset-curves">重置曲线</button>',
+      '<button type="button" data-tp="reset-curves">Reset curves</button>',
       '</div>',
       '<div class="tp-body"><div class="tp-groups"></div>',
       '<div class="tp-right"><canvas id="tp-curves" width="300" height="260"></canvas>',
@@ -69,14 +69,14 @@ export class TuningPanel {
     this._buildSliders();
     p.addEventListener('click', (e) => this._onClick(e));
     p.addEventListener('change', (e) => this._onChange(e));
-    /* 输入框获得焦点时不要让 WASD 传进游戏 */
+    /* Don't let WASD reach the game while an input has focus */
     p.addEventListener('keydown', (e) => e.stopPropagation(), true);
 
     const o = document.createElement('div');
     o.id = 'tuning-overlay';
     o.className = 'hidden';
     o.innerHTML = '<canvas id="tp-mini" width="260" height="200"></canvas><div id="tp-mini-read"></div>' +
-      '<div class="tp-mini-foot">O 关闭 · [ ] 调节 · , . 切换</div>';
+      '<div class="tp-mini-foot">O close · [ ] adjust · , . cycle</div>';
     document.body.appendChild(o);
     this.oel = o;
     this.mini = o.querySelector('#tp-mini');
@@ -94,7 +94,7 @@ export class TuningPanel {
         row.className = 'tp-row' + (meta.wired ? '' : ' unwired');
         const id = 'tp-' + g.group + '-' + it[0];
         row.innerHTML = '<label for="' + id + '">' + it[1] +
-          (meta.wired ? '' : '<i class="badge">未接线</i>') +
+          (meta.wired ? '' : '<i class="badge">NOT WIRED</i>') +
           '<em>' + (it[5] || '') + '</em></label>' +
           (meta.type === 'bool'
             ? '<input type="checkbox" id="' + id + '" data-g="' + g.group + '" data-k="' + it[0] + '">'
@@ -107,7 +107,7 @@ export class TuningPanel {
     this.syncFromFeel();
   }
 
-  /* 把 feel 的当前值刷到控件上 */
+  /* Push current feel values into the controls */
   syncFromFeel() {
     this.el.querySelectorAll('[data-g]').forEach((inp) => {
       const v = feel[inp.dataset.g][inp.dataset.k];
@@ -122,7 +122,7 @@ export class TuningPanel {
     const v = t.type === 'checkbox' ? t.checked : parseFloat(t.value);
     if (t.type !== 'checkbox' && !Number.isFinite(v)) return;
     feel[t.dataset.g][t.dataset.k] = v;
-    /* 同步同一参数的另一个控件（滑块 <-> 数字框） */
+    /* Sync the other control for the same parameter (slider <-> number box) */
     this.el.querySelectorAll('[data-g="' + t.dataset.g + '"][data-k="' + t.dataset.k + '"]').forEach((other) => {
       if (other === t || other.type === 'checkbox') return;
       other.value = v;
@@ -134,14 +134,14 @@ export class TuningPanel {
     if (!b) return;
     const a = b.dataset.tp;
     if (a === 'close') this.hide();
-    else if (a === 'preset-save') { FEEL_PRESETS[b.dataset.slot] = snapshotFeel(); this._flash(b, '已保存'); }
+    else if (a === 'preset-save') { FEEL_PRESETS[b.dataset.slot] = snapshotFeel(); this._flash(b, 'Saved'); }
     else if (a === 'preset-load') {
       const snap = FEEL_PRESETS[b.dataset.slot];
-      if (!snap) { this._flash(b, '空槽'); return; }
-      applyFeel(snap); this.syncFromFeel(); this._flash(b, '已载入');
+      if (!snap) { this._flash(b, 'Empty slot'); return; }
+      applyFeel(snap); this.syncFromFeel(); this._flash(b, 'Loaded');
     } else if (a === 'export') { this.textBox.value = exportFeelJSON(); this.textBox.classList.toggle('open'); }
     else if (a === 'copy') this._copy();
-    else if (a === 'reset-curves') { telemetry.reset(); this._flash(b, '已重置'); }
+    else if (a === 'reset-curves') { telemetry.reset(); this._flash(b, 'Reset'); }
   }
 
   _flash(btn, msg) {
@@ -154,18 +154,18 @@ export class TuningPanel {
     const json = exportFeelJSON();
     this.textBox.value = json;
     this.textBox.classList.add('open');
-    const done = () => this._flash(this.el.querySelector('[data-tp="copy"]'), '已复制');
+    const done = () => this._flash(this.el.querySelector('[data-tp="copy"]'), 'Copied');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(json).then(done).catch(() => this._selectCopy());
     } else this._selectCopy();
   }
   _selectCopy() {
     this.textBox.select();
-    try { document.execCommand('copy'); } catch (err) { /* 手动复制 */ }
-    this._flash(this.el.querySelector('[data-tp="copy"]'), '请手动复制');
+    try { document.execCommand('copy'); } catch (err) { /* manual copy */ }
+    this._flash(this.el.querySelector('[data-tp="copy"]'), 'Copy manually');
   }
 
-  /* ---------------- 显隐 ---------------- */
+  /* ---------------- Show/hide ---------------- */
   show() {
     this.open = true;
     this.syncFromFeel();
@@ -183,7 +183,7 @@ export class TuningPanel {
   hideOverlay() { this.overlay = false; this.oel.classList.add('hidden'); }
   toggleOverlay() { this.overlay ? this.hideOverlay() : this.showOverlay(); }
 
-  /* ---------------- 悬浮模式：键盘调节 ---------------- */
+  /* ---------------- Overlay mode: keyboard adjustment ---------------- */
   _idx() {
     let i = flat.findIndex((f) => f.group + '.' + f.key === feel.debug.selectedParam);
     return i < 0 ? 0 : i;
@@ -203,7 +203,7 @@ export class TuningPanel {
     if (this.open) this.syncFromFeel();
   }
 
-  /* ---------------- 每帧：绘制四条曲线 ---------------- */
+  /* ---------------- Per frame: draw four curves ---------------- */
   update(dt) {
     if (!this.open && !this.overlay) return;
     this._lastDraw += dt;
@@ -221,10 +221,10 @@ export class TuningPanel {
     c.fillStyle = 'rgba(6,12,17,.92)';
     c.fillRect(0, 0, w, h);
     const plots = [
-      { key: 'speed',  label: '速度 m/s',  color: '#54d6c6', max: Math.max(1, telemetry.max.speed) },
-      { key: 'accel',  label: '加速度 m/s²', color: '#ffd447', max: Math.max(1, telemetry.max.accel) },
-      { key: 'recoil', label: '后坐 rad',   color: '#ff9a3c', max: Math.max(0.05, telemetry.max.recoil) },
-      { key: 'spread', label: '扩散 rad',   color: '#74b6ff', max: Math.max(0.01, telemetry.max.spread) },
+      { key: 'speed',  label: 'Speed m/s',  color: '#54d6c6', max: Math.max(1, telemetry.max.speed) },
+      { key: 'accel',  label: 'Accel m/s²', color: '#ffd447', max: Math.max(1, telemetry.max.accel) },
+      { key: 'recoil', label: 'Recoil rad',   color: '#ff9a3c', max: Math.max(0.05, telemetry.max.recoil) },
+      { key: 'spread', label: 'Spread rad',   color: '#74b6ff', max: Math.max(0.01, telemetry.max.spread) },
     ];
     const ph = (h - 10) / 4;
     for (let pi = 0; pi < 4; pi++) {
@@ -256,7 +256,7 @@ export class TuningPanel {
     if (this.overlay) this.miniRead.textContent = this.readoutText();
   }
 
-  /* 悬浮模式下的数值文本 */
+  /* Value text in overlay mode */
   readoutText() {
     const f = flat[this._idx()];
     if (!f) return '';

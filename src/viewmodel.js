@@ -1,5 +1,5 @@
 /* ============================================================
-   viewmodel.js — 第一人称武器模型（摆动 / 举枪 / 换弹 / 后坐）
+   viewmodel.js — first-person weapon model (sway / aiming / reloading / recoil)
    ============================================================ */
 import * as THREE from 'three';
 import { WEAPONS } from './data.js';
@@ -14,7 +14,7 @@ const MAT = {
   glow:  new THREE.MeshStandardMaterial({ color: 0xcaf7ff, emissive: 0x5fd0e6, emissiveIntensity: 1.1 }),
 };
 
-/* update() 里复用的临时量：避免逐帧分配 */
+/* Reused temporaries for update(): avoiding per-frame allocation */
 const _vmHip = new THREE.Vector3();
 const _vmAds = new THREE.Vector3();
 
@@ -25,10 +25,10 @@ function box(w, h, d, mat, x = 0, y = 0, z = 0) {
 }
 
 export class ViewModel {
-  /* 释放私有场景里的几何体。
-     这些 BoxGeometry 在原实现（viewmodel.js 的 box()）里是每次部署重建的，
-     而 ViewModel 挂在私有 scene 上、不在主场景图内，
-     所以主场景的 traverse 扫不到它们 —— 每次重新部署净增约 70 个 buffer。 */
+  /* Release geometry in the private scene.
+     These BoxGeometry instances used to be rebuilt on every deployment in the original implementation (viewmodel.js box()),
+     and because ViewModel lives on a private scene outside the main scene graph,
+     the main scene's traverse could not reach them — leaking about 70 buffers per redeployment. */
   dispose() {
     if (!this.scene) return;
     this.scene.traverse((o) => {
@@ -61,7 +61,7 @@ export class ViewModel {
     this._vmRot = new THREE.Euler();
     this.lastYaw = 0; this.lastPitch = 0;
 
-    // 专用光照，保证第一人称武器始终可读
+    // Dedicated lighting so the first-person weapon always reads clearly
     const key = new THREE.DirectionalLight(0xe6f0fb, 1.35);
     key.position.set(-0.7, 0.9, 0.6);
     this.scene.add(key);
@@ -86,7 +86,7 @@ export class ViewModel {
     this.camera.updateProjectionMatrix();
   }
 
-  /** 在主动画之后以清空深度缓冲的方式绘制第一人称武器 */
+  /** Draw the first-person weapon after the main pass with the depth buffer cleared */
   render(renderer) {
     renderer.clearDepth();
     renderer.render(this.scene, this.camera);
@@ -103,21 +103,21 @@ export class ViewModel {
       g.add(box(0.02, 0.02, 0.09, MAT.metal, 0, 0.045, -0.08));
       g.add(box(0.014, 0.014, 0.014, MAT.glow, 0, 0.065, -0.10));
     } else {
-      g.add(box(0.075, 0.105, 0.44, MAT.body, 0, 0, 0));                    // 机匣
-      g.add(box(0.062, 0.072, 0.30, MAT.poly, 0, 0.008, -0.36));            // 护木
+      g.add(box(0.075, 0.105, 0.44, MAT.body, 0, 0, 0));                    // receiver
+      g.add(box(0.062, 0.072, 0.30, MAT.poly, 0, 0.008, -0.36));            // handguard
       const barrel = box(0.028, 0.028, 0.46, MAT.metal, 0, 0.012, -0.62); g.add(barrel);
       const muzzle = box(0.042, 0.042, 0.07, MAT.metal, 0, 0.012, -0.82);
       muzzle.name = 'muzzle'; g.add(muzzle);
-      g.add(box(0.05, 0.20, 0.10, MAT.metal, 0, -0.16, 0.0));               // 弹匣
+      g.add(box(0.05, 0.20, 0.10, MAT.metal, 0, -0.16, 0.0));               // magazine
       if (d.id === 'vk12') g.children[g.children.length - 1].scale.set(0.9, 0.7, 0.9);
-      g.add(box(0.05, 0.13, 0.055, MAT.poly, 0, -0.10, 0.16));              // 握把
-      g.add(box(0.055, 0.085, 0.26, MAT.poly, 0, 0.005, 0.40));             // 枪托
-      g.add(box(0.03, 0.045, 0.13, MAT.glow, 0, 0.075, -0.16));             // 光点
-      g.add(box(0.05, 0.055, 0.10, MAT.metal, 0, 0.085, 0.04));             // 光学
+      g.add(box(0.05, 0.13, 0.055, MAT.poly, 0, -0.10, 0.16));              // grip
+      g.add(box(0.055, 0.085, 0.26, MAT.poly, 0, 0.005, 0.40));             // stock
+      g.add(box(0.03, 0.045, 0.13, MAT.glow, 0, 0.075, -0.16));             // light
+      g.add(box(0.05, 0.055, 0.10, MAT.metal, 0, 0.085, 0.04));             // optic
       g.add(box(0.036, 0.03, 0.012, MAT.glow, 0, 0.09, -0.05));
-      g.add(box(0.035, 0.09, 0.035, MAT.poly, 0, -0.075, -0.24));           // 前握把
+      g.add(box(0.035, 0.09, 0.035, MAT.poly, 0, -0.075, -0.24));           // foregrip
     }
-    // 双手
+    // Hands
     g.add(box(0.075, 0.075, 0.115, MAT.glove, 0.005, -0.115, 0.135));
     g.add(box(0.075, 0.075, 0.12, MAT.glove, -0.005, -0.075, isPistol ? 0.0 : -0.30));
     g.scale.setScalar(scale);
@@ -133,7 +133,7 @@ export class ViewModel {
 
   get isPistol() { return this.current === this.models.p9 || this.current === this.models.r7; }
 
-  /** 枪口在世界空间的位置（供曳光弹与枪口火光使用） */
+  /** Muzzle position in world space (used by tracers and muzzle flash) */
   muzzleWorld(out) {
     const m = this.current.getObjectByName('muzzle') || this.current;
     this.scene.updateMatrixWorld(true);
@@ -149,18 +149,18 @@ export class ViewModel {
     const d = player.def;
     this.setActive(d.id);
 
-    // 鼠标滞后
+    // Mouse lag
     const dyaw = player.yaw - this.lastYaw;
     const dpitch = player.pitch - this.lastPitch;
     this.lastYaw = player.yaw; this.lastPitch = player.pitch;
     this.lag.x += (-dyaw * feel.viewmodel.lagYaw - this.lag.x) * Math.min(1, dt * feel.viewmodel.lagDamp);
     this.lag.y += (-dpitch * feel.viewmodel.lagPitch - this.lag.y) * Math.min(1, dt * feel.viewmodel.lagDamp);
 
-    // 后坐
+    // Recoil
     this.recoilZ *= Math.exp(-dt * 9);
     this.recoilPitch *= Math.exp(-dt * 8);
 
-    // 换弹进度
+    // Reload progress
     if (player.reloading > 0) this.reloadT = Math.min(1, 1 - player.reloading / d.reload);
     else this.reloadT = Math.max(0, this.reloadT - dt * 4);
 
@@ -168,10 +168,10 @@ export class ViewModel {
     const bobX = Math.sin(player.bob) * feel.viewmodel.bobAmpX * player.moving * (1 - ads * feel.viewmodel.bobAdsDamp);
     const bobY = Math.abs(Math.cos(player.bob)) * feel.viewmodel.bobAmpY * player.moving * (1 - ads * feel.viewmodel.bobAdsDamp);
 
-    /* 位置以「光学瞄具位于视线轴上」为准。
-       这里的 Vector3/Euler 全部改为实例字段上的原地赋值：
-       原实现每帧新建 3 个 Vector3 + 2 个 Euler（约 300 个对象/秒）。
-       数值与原来完全一致，只是不再分配。 */
+    /* Position is anchored so the optic sits on the sight axis.
+       The Vector3/Euler objects here were changed to in-place writes on instance fields:
+       the original created 3 Vector3 + 2 Euler objects every frame (~300 objects/s).
+       Values are exactly the same as before; they simply no longer allocate. */
     const hip = _vmHip, adsP = _vmAds, pos = this._vmPos, rot = this._vmRot;
     if (this.isPistol) {
       hip.set(0.215, -0.165, -0.44); adsP.set(0.0, -0.050, -0.42);
@@ -183,7 +183,7 @@ export class ViewModel {
     pos.y += this.lag.y + bobY - this.reloadT * 0.16;
     pos.z += this.recoilZ;
 
-    /* 原实现里 adsRot 恒为 (0,0,0)，展开后即 hip 分量乘以 (1-ads) */
+    /* In the original, adsRot was always (0,0,0), so this expands to the hip component times (1-ads) */
     const hx = 0.02, hy = this.isPistol ? -0.10 : -0.06, hz = this.isPistol ? 0.02 : 0.035;
     rot.set(
       hx * (1 - ads) + this.recoilPitch + this.reloadT * 0.5,
@@ -192,7 +192,7 @@ export class ViewModel {
     );
     this.root.position.copy(pos);
     this.root.rotation.copy(rot);
-    // 冲刺时压枪
+    // Lower the weapon while sprinting
     if (player.stance === 'sprint') {
       this.root.position.y -= feel.viewmodel.sprintDrop;
       this.root.rotation.x += feel.viewmodel.sprintTilt;

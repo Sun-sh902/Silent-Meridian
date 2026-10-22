@@ -1,12 +1,12 @@
 /* ============================================================
-   tools/audio-stress.mjs — 闪光弹压力测试（验收用）
-   连续触发 20 次闪光弹，检查：
-     · 引爆次数是否恰好 20（防止“每帧重复引爆”回归）
-     · 主线程逻辑耗时（不含渲染）是否稳定
-     · AudioContext 数量是否恒为 1
-     · 音频节点 / 投掷物 / DOM 日志是否回收
-     · 是否出现未捕获异常
-   用法： node tools/audio-stress.mjs
+   tools/audio-stress.mjs — flashbang stress test (acceptance)
+   Triggers 20 flashbangs in a row and checks:
+     · Whether the detonation count is exactly 20 (guards against "detonating every frame" regressions)
+     · Whether main-thread logic time (excluding rendering) stays stable
+     · Whether the AudioContext count stays at 1
+     · Whether audio nodes / projectiles / DOM log are reclaimed
+     · Whether any uncaught exceptions occur
+   Usage: node tools/audio-stress.mjs
    ============================================================ */
 import { Suite } from './harness.mjs';
 
@@ -20,7 +20,7 @@ const browser = await suite.launch({
   defaultViewport: { width: 1280, height: 720 },
 });
 const page = await suite.newPage();
-/* 本套件额外把「单帧逻辑耗时异常」这类 warning 也算作失败 */
+/* This suite additionally treats warnings such as "abnormal single-frame logic time" as failures */
 page.on('console', (m) => {
   const t = m.text();
   if (m.type() === 'warning' && /SILENT MERIDIAN/.test(t)) suite.pageErrors.push('warn: ' + t);
@@ -33,17 +33,17 @@ const check = (name, ok, detail) => suite.check(name, ok, detail);
 await page.goto('http://127.0.0.1:8201/?deploy=1&pos=0,-30&yaw=0', { waitUntil: 'load' });
 await wait(2500);
 
-// 基线
+// Baseline
 const base = await page.evaluate(() => ({
   audio: window.__game.audio.stats(),
   nodes: window.__game.actors.length,
   domNodes: document.getElementsByTagName('*').length,
   heap: performance.memory ? performance.memory.usedJSHeapSize : null,
 }));
-check('AudioContext 仅有 1 个', base.audio.ctxCount === 1, 'ctxCount=' + base.audio.ctxCount);
-check('噪声缓冲已就绪', base.audio.noiseReady, 'noiseReady=' + base.audio.noiseReady);
+check('Exactly one AudioContext', base.audio.ctxCount === 1, 'ctxCount=' + base.audio.ctxCount);
+check('Noise buffer is ready', base.audio.noiseReady, 'noiseReady=' + base.audio.noiseReady);
 
-// 对照组：不触发任何投掷物，采集同样的帧数量，作为“环境基线”
+// Control group: throw nothing, collect the same number of frames as an "environmental baseline"
 await page.evaluate(() => {
   const p = window.__game.perf;
   p.logicMax = 0; p.logicSum = 0; p.frames = 0; p.stalls = 0; p.worstGap = 0;
@@ -54,7 +54,7 @@ for (let i = 0; i < 60; i++) {
 }
 const control = await page.evaluate(() => ({ ...window.__game.perf }));
 
-// 重置性能计时，开始连续触发 20 次闪光弹
+// Reset performance timers and start 20 consecutive flashbangs
 await page.evaluate(() => {
   const g = window.__game;
   g.perf.logicMax = 0; g.perf.logicSum = 0; g.perf.frames = 0; g.perf.stalls = 0; g.perf.worstGap = 0;
@@ -65,7 +65,7 @@ await page.evaluate(() => {
   }
 });
 
-// 等到全部引爆并且场上没有残留投掷物
+// Wait until everything has detonated and no projectiles remain
 let settled = false;
 for (let i = 0; i < 120; i++) {
   await wait(500);
@@ -76,7 +76,7 @@ for (let i = 0; i < 120; i++) {
   }));
   if (s.thrown >= 20 && s.det >= 20 && s.proj === 0) { settled = true; break; }
 }
-await wait(2500);   // 让尾音结束、节点回收
+await wait(2500);   // let tails finish and nodes be reclaimed
 
 const after = await page.evaluate(() => ({
   det: window.__game.stats.detonations,
@@ -90,36 +90,36 @@ const after = await page.evaluate(() => ({
   heap: performance.memory ? performance.memory.usedJSHeapSize : null,
 }));
 
-check('20 次投掷全部引爆', after.thrown >= 20 && after.det >= 20, `投掷=${after.thrown} 引爆=${after.det}`);
-check('引爆次数没有爆炸式增长（无每帧重复触发）', after.det <= 21, '引爆=' + after.det + '（期望 <=21）');
-check('场上无残留投掷物', after.proj === 0, 'projectiles=' + after.proj);
-check('主线程单帧逻辑耗时峰值 < 50ms', after.perf.logicMax < 50,
+check('All 20 throws detonate', after.thrown >= 20 && after.det >= 20, `thrown=${after.thrown} detonated=${after.det}`);
+check('Detonation count does not explode (no per-frame retriggering)', after.det <= 21, 'detonated=' + after.det + ' (expected <=21)');
+check('No leftover projectiles', after.proj === 0, 'projectiles=' + after.proj);
+check('Main-thread peak single-frame logic time < 50ms', after.perf.logicMax < 50,
   `logicMax=${after.perf.logicMax.toFixed(1)}ms avg=${after.perf.logicAvg.toFixed(2)}ms frames=${after.perf.frames}`);
-check('主线程平均逻辑耗时 < 16ms', after.perf.logicAvg < 16, `avg=${after.perf.logicAvg.toFixed(2)}ms`);
-check('闪光弹未增加每帧逻辑开销（对比对照组）',
+check('Main-thread average logic time < 16ms', after.perf.logicAvg < 16, `avg=${after.perf.logicAvg.toFixed(2)}ms`);
+check('Flashbangs add no per-frame logic cost (vs control group)',
   after.perf.logicAvg - control.logicAvg < 3,
-  `对照组 ${control.logicAvg.toFixed(2)}ms → 压力组 ${after.perf.logicAvg.toFixed(2)}ms`);
-check('AudioContext 仍为 1 个', after.audio.ctxCount === 1, 'ctxCount=' + after.audio.ctxCount);
-check('音频节点已回收（不超过 40）', after.audio.liveNodes <= 40, 'liveNodes=' + after.audio.liveNodes);
-check('DOM 日志未堆积', after.logItems <= 7, 'log-item=' + after.logItems);
-check('白屏叠加层已淡出', parseFloat(after.whiteout) === 0, 'opacity=' + after.whiteout);
-/* 页面异常不再是普通断言，而是由 Suite 统一计入失败（更强约束） */
+  `control ${control.logicAvg.toFixed(2)}ms → stress ${after.perf.logicAvg.toFixed(2)}ms`);
+check('AudioContext is still 1', after.audio.ctxCount === 1, 'ctxCount=' + after.audio.ctxCount);
+check('Audio nodes reclaimed (no more than 40)', after.audio.liveNodes <= 40, 'liveNodes=' + after.audio.liveNodes);
+check('DOM log did not pile up', after.logItems <= 7, 'log-item=' + after.logItems);
+check('Whiteout overlay has faded', parseFloat(after.whiteout) === 0, 'opacity=' + after.whiteout);
+/* Page errors are no longer ordinary assertions; Suite counts them as failures centrally (a stronger constraint) */
 if (base.heap && after.heap) {
   const growMB = (after.heap - base.heap) / 1048576;
-  check('JS 堆增长 < 25MB（仅供参考）', growMB < 25, growMB.toFixed(1) + ' MB');
+  check('JS heap growth < 25MB (informational only)', growMB < 25, growMB.toFixed(1) + ' MB');
 }
 
-console.log('\n===== 闪光弹压力测试（连续 20 次） =====');
+console.log('\n===== Flashbang stress test (20 consecutive) =====');
 for (const r of results) console.log(`${r.ok ? '✓ PASS' : '✗ FAIL'}  ${r.name}${r.detail ? '  —  ' + r.detail : ''}`);
-console.log('\n阶段统计：');
-console.log('  触发期间帧数        :', after.perf.frames);
-console.log('  逻辑耗时 平均/峰值  :', after.perf.logicAvg.toFixed(2), '/', after.perf.logicMax.toFixed(1), 'ms');
-console.log('  最长帧间隔(含渲染)  :', after.perf.worstGap.toFixed(0), 'ms（软件渲染环境，仅供参考）');
-console.log('  对照组(不投掷)      : 每帧逻辑', control.logicAvg.toFixed(2), 'ms · 峰值', control.logicMax.toFixed(1), 'ms · 帧数', control.frames);
-console.log('  → 每帧逻辑增量      :', (after.perf.logicAvg - control.logicAvg).toFixed(2), 'ms（这才是环境无关的可信指标）');
-console.log('  （帧间隔受软件渲染影响波动极大，本次对照', control.worstGap.toFixed(0), 'ms vs 压力', after.perf.worstGap.toFixed(0), 'ms，不作结论）');
-console.log('  被抑制的重复音效    :', after.audio.gated, '次');
-console.log('  在用音频节点        :', base.audio.liveNodes, '→', after.audio.liveNodes);
-console.log('  DOM 节点            :', base.domNodes, '→', after.domNodes);
-if (base.heap && after.heap) console.log('  JS 堆               :', (base.heap / 1048576).toFixed(1), '→', (after.heap / 1048576).toFixed(1), 'MB');
+console.log('\nPhase statistics:');
+console.log('  Frames during burst :', after.perf.frames);
+console.log('  Logic time avg/peak :', after.perf.logicAvg.toFixed(2), '/', after.perf.logicMax.toFixed(1), 'ms');
+console.log('  Worst frame gap (with rendering):', after.perf.worstGap.toFixed(0), 'ms (software-rendered; informational only)');
+console.log('  Control (no throws) : per-frame logic', control.logicAvg.toFixed(2), 'ms · peak', control.logicMax.toFixed(1), 'ms · frames', control.frames);
+console.log('  -> per-frame logic delta:', (after.perf.logicAvg - control.logicAvg).toFixed(2), 'ms (the trustworthy, environment-independent metric)');
+console.log('  (frame gaps fluctuate wildly under software rendering: control', control.worstGap.toFixed(0), 'ms vs stress', after.perf.worstGap.toFixed(0), 'ms; no conclusion drawn)');
+console.log('  Suppressed duplicate sounds:', after.audio.gated);
+console.log('  Live audio nodes    :', base.audio.liveNodes, '→', after.audio.liveNodes);
+console.log('  DOM nodes           :', base.domNodes, '→', after.domNodes);
+if (base.heap && after.heap) console.log('  JS heap             :', (base.heap / 1048576).toFixed(1), '→', (after.heap / 1048576).toFixed(1), 'MB');
 await suite.finish();
