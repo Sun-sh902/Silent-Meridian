@@ -250,7 +250,9 @@ that's a separate issue and hasn't been changed.
 node tools/responsive-test.mjs
 ```
 
-Four sweeps, **38 audits** in total:
+Four sweeps plus a renderer check, **39 audits** in total:
+
+* 0: under `prefers-reduced-motion`, post grain/aberration are off and the light-shaft / mote clock is frozen
 
 * A: 8 widths (1920 / 1440 / 1280 / 1024 / 900 / 768 / 600 / 480)
 * B: 5 browser zoom levels (50% / 75% / 100% / 125% / 150%, physical window 1440×900)
@@ -419,6 +421,24 @@ Files in `src/` use the bare specifier `import ... from 'three'`, which resolves
 `build.mjs` sets the alias explicitly, pinning the bundle to `vendor/` too, so **the two copies can't diverge**.
 `three` in `package.json` is pinned to exactly `0.180.0` and is only there for editor/tooling type resolution; it isn't bundled.
 
+## Rendering
+
+Everything is procedural and offline; the look comes from physics first, effects last:
+
+| Layer | What it does | Where |
+| --- | --- | --- |
+| Albedo and materials | Dielectric asphalt/water/paint (metalness 0), physically plausible albedos, a wet-asphalt clearcoat driven by a world-space wetness mask, corrugated containers with worn door ends | `src/world.js`, `src/textures.js` |
+| Light | One sky gradient feeds the environment map, the visible sky and the fog's far colour; hemisphere split, upward sodium bounce, wide-penumbra lamp spotlights with inverse-square falloff, low-decay far fills, a dim moon key; baked sky visibility indoors | `src/world.js` |
+| Atmosphere | Fog density fixed for gameplay, colour graded by distance, thinning with height so tall structures rise out of the sea-fog layer; soft light shafts and forward-scattering motes | `src/world.js` |
+| First-person weapon | Lit by a camera-space mirror of the world lights (lamps, sky, environment), so it warms under a lamp and darkens in shadow | `src/viewmodel.js` |
+| Post | Half-float scene target, wide low-intensity bloom, one composite pass (ACES, a single grade curve, mild vignette, dither, grain, chromatic aberration, FXAA-style edge AA). Off with `?nopost` | `src/post.js` |
+
+Exposure (`renderer.toneMappingExposure = 1.0`) is the only global brightness control. Every time-varying visual effect
+runs on simulation time (deterministic under `?test=1`) and stops under `prefers-reduced-motion`.
+
+`node tools/render-time.mjs [--ab]` measures render cost at the five fixed poses (`--ab` alternates post on/off inside one
+page, which cancels machine-load drift).
+
 ## Debug parameters
 
 Append query parameters to the address for verification:
@@ -427,6 +447,7 @@ Append query parameters to the address for verification:
 `&alarm=1` raise the alarm at once · `&dummy=8` place static targets straight ahead
 `&tacmap=1` open the tactical map · `&screen=briefing|loadout` open a given screen
 `&debrief=1` show a sample debrief · `&novm=1` hide the first-person weapon
+`&nopost` disable post-processing (renders straight to the canvas, CSS grade overlays back on)
 
 ## Self-checks
 
