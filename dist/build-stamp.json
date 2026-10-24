@@ -1,7 +1,7 @@
 {
   "v": "1.1.0",
   "hash": "0eabe4f19fb1",
-  "at": "2026-10-24T04:37:25.013Z",
+  "at": "2026-10-24T04:46:48.996Z",
   "inputs": {
     "src/actors.js": "adfef9e5e051",
     "src/audio.js": "06f2eb24e64a",
@@ -24,6 +24,6 @@
     "src/viewmodel.js": "b8ddc60e6e57",
     "src/world.js": "b27fa1a5d596",
     "index.html": "9ff7f09b3b74",
-    "styles/ui.css": "62b73716e850"
+    "styles/ui.css": "d0e74da28ef8"
   }
 }
