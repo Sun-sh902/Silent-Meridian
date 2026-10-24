@@ -37,6 +37,30 @@ function nonIndexed(g) {
    fogColor (the uniform) is the far colour; FOG_NEAR_TINT scales it down and cools it near the camera.
    Patched once, globally, before any material compiles (three resolves #include chunks at compile time).
    ============================================================ */
+/* Sea fog is a layer, not a uniform medium: it thins out above ~9 m and is mostly gone by ~32 m. Ground-level
+   visibility (everything a player or the AI can see, all under ~10 m) is unchanged; structures an order of magnitude
+   taller than a person — the quay crane, the freighter's superstructure — rise out of it, their lower parts still
+   banded in fog. vFogHeight is the fragment's world height, reconstructed from mvPosition (every shader has it). */
+THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\n  varying float vFogDepth;\n  varying float vFogHeight;\n#endif';
+THREE.ShaderChunk.fog_vertex = [
+  '#ifdef USE_FOG',
+  '  vFogDepth = - mvPosition.z;',
+  '  vFogHeight = ( ( mvPosition.xyz - viewMatrix[ 3 ].xyz ) * mat3( viewMatrix ) ).y;',
+  '#endif',
+].join('\n');
+THREE.ShaderChunk.fog_pars_fragment = [
+  '#ifdef USE_FOG',
+  '  uniform vec3 fogColor;',
+  '  varying float vFogDepth;',
+  '  varying float vFogHeight;',
+  '  #ifdef FOG_EXP2',
+  '    uniform float fogDensity;',
+  '  #else',
+  '    uniform float fogNear;',
+  '    uniform float fogFar;',
+  '  #endif',
+  '#endif',
+].join('\n');
 THREE.ShaderChunk.fog_fragment = [
   '#ifdef USE_FOG',
   '  #ifdef FOG_EXP2',
@@ -44,6 +68,7 @@ THREE.ShaderChunk.fog_fragment = [
   '  #else',
   '    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );',
   '  #endif',
+  '  fogFactor *= mix( 1.0, 0.3, smoothstep( 9.0, 32.0, vFogHeight ) );',
   '  vec3 fogTint = mix( vec3( 0.42, 0.50, 0.66 ), vec3( 1.0 ), smoothstep( 12.0, 55.0, vFogDepth ) );',
   '  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor * fogTint, fogFactor );',
   '#endif',
@@ -856,6 +881,33 @@ export function buildWorld(scene, renderer) {
   L.box(-0.35, 0.35, 14.0, 16.4, -54.9, -54.2, { color: 0x39424a, bucket: 'metal', collide: false });
   L.sign('NORDBRÜCKE CRANE CO.', 'GANTRY 04 · SWL 40 T', -28.6, 12.0, -56.5, 9, 2.4, -Math.PI / 2, { code: 'CR-04', accent: '#ffd479' });
 
+  /* ---------------- Quay crane (ship-to-shore), the scale reference ----------------
+     ~42 m A-frame, boom at 36 m running out over the water: twenty people tall. From the yard it rises out of the
+     fog layer in bands (see fog_vertex); red obstruction lights mark the apex and the boom tip. */
+  {
+    const cx = -48, zl = -60.5, zs = -65.4, C = 0x5d6670;
+    for (const lx of [cx - 6, cx + 6]) {
+      L.box(lx - 0.6, lx + 0.6, 0, 30, zl - 0.6, zl + 0.6, { color: C, bucket: 'metal' });      // land legs
+      L.box(lx - 0.6, lx + 0.6, 0, 30, zs - 0.6, zs + 0.6, { color: C, bucket: 'metal' });      // sea legs
+      L.box(lx - 0.5, lx + 0.5, 30, 31, zs - 0.6, zl + 0.6, { color: C, bucket: 'metal', collide: false });   // portal beam
+      L.box(lx - 0.4, lx + 0.4, 12, 12.8, zs, zl, { color: C, bucket: 'metal', collide: false });            // sill beam
+      // A-frame struts to the apex
+      for (let i = 0; i < 10; i++) {
+        const t = i / 9, y = 31 + t * 11, z = zl + (zs - zl) * 0.5 * t;
+        L.box(lx - 0.35, lx + 0.35, y, y + 1.3, z - 0.35, z + 0.35, { color: C, bucket: 'metal', collide: false });
+      }
+    }
+    L.box(cx - 6.6, cx + 6.6, 42, 43, zl + (zs - zl) * 0.5 - 0.6, zl + (zs - zl) * 0.5 + 0.6, { color: C, bucket: 'metal', collide: false });
+    L.box(cx - 3.2, cx + 3.2, 35, 37.2, -30, -112, { color: 0x4f5760, bucket: 'metal', collide: false });   // boom + backreach
+    L.box(cx - 4, cx + 4, 31, 35, zl + 4, zl + 13, { color: 0x6a5a48, bucket: 'paint', collide: false });  // machinery house
+    L.box(cx - 2.2, cx + 2.2, 31.5, 34.5, zs - 14, zs - 10, { color: 0x3c4249, bucket: 'metal', collide: false }); // trolley
+    const red = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff2a14).multiplyScalar(12) });
+    const redGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    for (const [x, y, z] of [[cx, 43.4, zl + (zs - zl) * 0.5], [cx, 37.6, -111.5], [cx, 37.6, -30.5]]) {
+      const m = new THREE.Mesh(redGeo, red); m.position.set(x, y, z); scene.add(m);
+    }
+  }
+
   /* ---------------- Freighter (distant silhouette) ---------------- */
   const shipTex = TX.shipHullTexture();
   const shipMat = new THREE.MeshStandardMaterial({ map: shipTex, roughness: 0.75, metalness: 0.35, color: 0x8c9aa6 });
@@ -932,6 +984,18 @@ export function buildWorld(scene, renderer) {
       L.cyl(x + 0.1, 0.72, z + 0.3, 0.62, 0.24, { color: 0x181b1f, collide: true, lowPoly: true });
     }
   }
+
+  /* ---------------- Spawn foreground ----------------
+     Something within 1–3 m of the first frame: a jersey barrier and a strapped pallet stack on the left of the
+     spawn. Kept on the left so the forward-right path from the spawn (and the tests that walk it) stays clear. */
+  /* jersey barriers: wide foot, narrow upper wall (profile in two boxes), weathered concrete albedo ~0.2 */
+  for (const [x, z, r] of [[-3.5, 41.3, 0.2], [-5.2, 40.8, 0.06]]) {
+    L.rotBox(x, 0.16, z, 2.4, 0.32, 0.6, r, { color: 0x4f4f4b, bucket: 'concrete', tag: 'prop' });
+    L.rotBox(x, 0.58, z, 2.4, 0.52, 0.26, r, { color: 0x53534f, bucket: 'concrete', tag: 'prop' });
+  }
+  L.box(-4.6, -3.4, 0, 0.14, 42.6, 43.7, { color: 0x6b573c, bucket: 'paint' });
+  L.box(-4.55, -3.45, 0.14, 1.1, 42.65, 43.65, { color: 0x4a5a62, bucket: 'paint' });
+  L.box(-4.5, -3.5, 1.1, 1.62, 42.7, 43.6, { color: 0x6a5640, bucket: 'paint', collide: false });
 
   /* ---------------- Street lamps ---------------- */
   const lampSpots = [
@@ -1233,7 +1297,9 @@ export function buildWorld(scene, renderer) {
 
   /* ---------------- Spawns ---------------- */
   const spawns = {
-    player: { x: 0, z: 43.5, yaw: 0 },
+    /* turned ~13° left: the lane lines run diagonally, the lamp pool sits right of centre instead of dead-centre,
+       and the quay crane rises out of the fog on the left third */
+    player: { x: 0, z: 43.5, yaw: 0.22 },
     squad: [
       { x: -2.6, z: 46.4, yaw: 0.12 },
       { x: 2.6, z: 46.4, yaw: -0.12 },

@@ -5,6 +5,7 @@
      node tools/shots-fixed.mjs [--out /tmp/shots] [--tag now] [--repeat 1]
                                 [--poses yard-center,dock-edge] [--query "&nopost"]
                                 [--hud] [--port 8233] [--root <another worktree>] [--pose name,x,z,yaw,pitch] [--reduced-motion]
+                                [--first-frame] [--size 2100x900]
      node tools/shots-fixed.mjs --pair /tmp/shots/before /tmp/shots/after [--out /tmp/shots/pairs]
 
    Method:
@@ -31,7 +32,9 @@ import { Suite, ROOT } from './harness.mjs';
 const argv = process.argv.slice(2);
 const argOf = (n, d) => { const i = argv.indexOf(n); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
 const PORT = Number(argOf('--port', '8233'));
-const W = 1600, H = 900;
+/* --size WxH: viewport for aspect-ratio checks (default 1600×900) */
+const SIZE = (() => { const i = argv.indexOf('--size'); return i >= 0 && argv[i + 1] ? argv[i + 1].split('x').map(Number) : [1600, 900]; })();
+const W = SIZE[0], H = SIZE[1];
 
 import { POSES } from './poses.mjs';
 
@@ -98,7 +101,7 @@ async function shootPose(pose, query, withHud) {
     window.__feel.debug.freezeAI = true;   // runtime switch; feel.js is not edited
     g.input.keys.clear();
     g.input.lmb = false; g.input.rmb = false; g.input.lmbPressed = false;
-    P.pos.x = p.pos[0]; P.pos.z = p.pos[1]; P.yaw = p.yaw; P.pitch = p.pitch;
+    if (!p.spawn) { P.pos.x = p.pos[0]; P.pos.z = p.pos[1]; P.yaw = p.yaw; P.pitch = p.pitch; }
     P.vel = 0; P.ads = 0;
     g.clock = p.clock;
     for (let i = 0; i < p.steps; i++) {
@@ -170,6 +173,8 @@ const WANT = argOf('--poses', '');
 const WITH_HUD = argv.includes('--hud');
 const REDUCED = argv.includes('--reduced-motion');   // emulate prefers-reduced-motion: grain and aberration must switch off
 let poses = WANT ? POSES.filter((p) => WANT.split(',').includes(p.name)) : POSES;
+/* --first-frame: the real first frame of a mission (player spawn as authored in world.js, nothing overridden) */
+if (argv.includes('--first-frame')) poses = [{ name: 'first-frame', spawn: true, clock: 23 * 3600 + 41 * 60, steps: 40 }];
 /* --pose name,x,z,yaw,pitch : an ad-hoc pose instead of the named set (for spot checks, not for the report) */
 if (argOf('--pose', '')) {
   const [name, x, z, yaw, pitch] = argOf('--pose', '').split(',');
