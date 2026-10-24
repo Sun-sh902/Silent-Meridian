@@ -30,34 +30,38 @@ function toTex(canvas, repeat) {
 
 /* ---------------- Concrete / asphalt ---------------- */
 export function asphaltTexture() {
+  /* Weathered asphalt, albedo ~0.05–0.07 linear (sRGB ~60–70) with aggregate speckle.
+     The old base (#14181d, ~0.007 linear) was an order of magnitude too dark, so no light could resolve it. */
   const c = mkCanvas(512, 512), g = c.getContext('2d');
-  g.fillStyle = '#14181d'; g.fillRect(0, 0, 512, 512);
+  g.fillStyle = '#3c3e41'; g.fillRect(0, 0, 512, 512);
   for (let i = 0; i < 9000; i++) {
-    const v = 18 + rand() * 26;
-    g.fillStyle = `rgba(${v + 8},${v + 10},${v + 14},${0.25 + rand() * 0.4})`;
+    const v = 44 + rand() * 40;
+    g.fillStyle = `rgba(${v},${v + 1},${v + 3},${0.25 + rand() * 0.4})`;
     g.fillRect(rand() * 512, rand() * 512, 1 + rand() * 2, 1 + rand() * 2);
   }
-  // wet patches
+  // damp patches (darker where water has soaked in)
   for (let i = 0; i < 40; i++) {
     const x = rand() * 512, y = rand() * 512, r = 20 + rand() * 90;
     const grd = g.createRadialGradient(x, y, 0, x, y, r);
-    grd.addColorStop(0, 'rgba(6,10,14,.5)');
-    grd.addColorStop(1, 'rgba(6,10,14,0)');
+    grd.addColorStop(0, 'rgba(14,16,18,.35)');
+    grd.addColorStop(1, 'rgba(14,16,18,0)');
     g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
   }
   return toTex(c, [14, 14]);
 }
 
 export function concreteTexture() {
+  /* Detail map, mean ~0.7 linear: it modulates the vertex colour (which carries the albedo) instead of
+     multiplying it down by a second dark albedo. */
   const c = mkCanvas(512, 512), g = c.getContext('2d');
-  g.fillStyle = '#232830'; g.fillRect(0, 0, 512, 512);
+  g.fillStyle = '#d6d6d4'; g.fillRect(0, 0, 512, 512);
   for (let i = 0; i < 5200; i++) {
-    const v = 30 + rand() * 30;
-    g.fillStyle = `rgba(${v},${v + 3},${v + 7},${0.16 + rand() * 0.3})`;
+    const v = 170 + rand() * 70;
+    g.fillStyle = `rgba(${v},${v},${v - 2},${0.16 + rand() * 0.3})`;
     g.fillRect(rand() * 512, rand() * 512, 1 + rand() * 3, 1 + rand() * 3);
   }
   // formwork joints
-  g.strokeStyle = 'rgba(10,12,16,.55)'; g.lineWidth = 2;
+  g.strokeStyle = 'rgba(70,72,74,.55)'; g.lineWidth = 2;
   for (let i = 0; i <= 4; i++) {
     g.beginPath(); g.moveTo(0, i * 128); g.lineTo(512, i * 128); g.stroke();
     g.beginPath(); g.moveTo(i * 128, 0); g.lineTo(i * 128, 512); g.stroke();

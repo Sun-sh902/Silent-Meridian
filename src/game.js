@@ -27,7 +27,9 @@ export class Game {
     this.renderer.setPixelRatio(canvasDpr(2));   // the real DPR is kept current in resize()
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.28;
+    /* Exposure is the one global brightness control. Light levels in world.js are set relative to 1.0;
+       never raise one class of object to compensate (that was the viewmodel's private-light bug). */
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     /* Note: an on-demand shadow map (autoUpdate=false + dirty flag) was tried;
