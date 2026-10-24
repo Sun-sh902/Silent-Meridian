@@ -1,14 +1,14 @@
 /* ============================================================
-   tools/serve.mjs — 本地开发服务器（npm start）
+   tools/serve.mjs — local dev server (npm start)
    ------------------------------------------------------------
-   用法： node tools/serve.mjs [--port 8123]
+   Usage: node tools/serve.mjs [--port 8123]
 
-   index.html 与 src/*.js 是 ES module，file:// 下会被 CORS 拦掉整张模块图，
-   所以开发时必须用 HTTP 打开。
+   index.html and src/*.js are ES modules; under file:// CORS blocks the whole module graph,
+   so development has to go through HTTP.
 
-   ⚠️ 这个文件**刻意不 import harness.mjs**：harness 顶层 import puppeteer-core，
-   而 clone 之后往往还没跑 npm install ——「clone 下来就能起服务」这条路径必须零依赖。
-   所以这里只用 node 内置模块。
+   ⚠️ This file deliberately does NOT import harness.mjs: harness imports puppeteer-core at top level,
+   and right after a clone npm install often hasn't run yet — "clone and serve" must have zero dependencies.
+   So only node built-ins are used here.
    ============================================================ */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -39,7 +39,7 @@ const server = createServer(async (req, res) => {
     let path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     if (path.endsWith('/')) path += 'index.html';
     const file = normalize(join(ROOT, path));
-    // 目录穿越防护：解析后的路径必须仍在仓库内
+    // path traversal guard: the resolved path must stay inside the repo
     if (file !== ROOT && !file.startsWith(ROOT + sep)) {
       res.writeHead(403).end('403 forbidden');
       return;
@@ -51,7 +51,7 @@ const server = createServer(async (req, res) => {
     const body = await readFile(file);
     res.writeHead(200, {
       'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-      'cache-control': 'no-cache',   // 开发时要能立刻看到改动
+      'cache-control': 'no-cache',   // changes must show up immediately during development
     });
     res.end(body);
   } catch (err) {
@@ -61,7 +61,7 @@ const server = createServer(async (req, res) => {
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`\n  端口 ${port} 已被占用。换一个： npm start -- --port 8124\n`);
+    console.error(`\n  Port ${port} is in use. Pick another: npm start -- --port 8124\n`);
     process.exit(2);
   }
   throw err;
@@ -69,12 +69,12 @@ server.on('error', (err) => {
 
 server.listen(port, '127.0.0.1', () => {
   console.log('');
-  console.log('  寂静子午线 · 本地开发服务器');
+  console.log('  The Silent Meridian · local dev server');
   console.log(`  http://127.0.0.1:${port}/`);
   console.log('');
-  console.log('  改动 src/ 后刷新页面即可。');
-  console.log('  要更新 file:// 单文件版： node build.mjs');
-  console.log('  Ctrl+C 退出。');
+  console.log('  Edit src/ and reload the page.');
+  console.log('  To refresh the file:// single-file build: node build.mjs');
+  console.log('  Ctrl+C to quit.');
   console.log('');
 });
 

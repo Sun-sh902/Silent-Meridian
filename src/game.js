@@ -1,5 +1,5 @@
 /* ============================================================
-   game.js — 任务编排：指令系统、识别机制、目标流程、渲染循环
+   game.js — mission orchestration: orders, identification, objective flow, render loop
    ============================================================ */
 import * as THREE from 'three';
 import { buildWorld } from './world.js';
@@ -24,44 +24,44 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({
       canvas, antialias: true, powerPreference: 'high-performance', stencil: false,
     });
-    this.renderer.setPixelRatio(canvasDpr(2));   // 真实 DPR 在 resize() 里随时更新
+    this.renderer.setPixelRatio(canvasDpr(2));   // the real DPR is kept current in resize()
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.28;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    /* 注：曾尝试把阴影贴图改成「按需重算」（autoUpdate=false + 脏标记），
-       实测跳过率为 0% —— 队形内的队友每帧都会有微小位移（yaw 阻尼逼近、
-       分离推挤、瞄准跟随），几乎没有「所有投影体都完全静止」的帧。
-       收益为零却要求所有未来的投影体都记得打标记，故不采用；
-       只保留下面 world.update 里的纹素对齐（那是真正的画质修复）。 */
+    /* Note: an on-demand shadow map (autoUpdate=false + dirty flag) was tried;
+       measured skip rate was 0% — squad members in formation move slightly every frame (yaw damping,
+       separation pushes, aim tracking), so there is almost never a frame where every caster is static.
+       Zero gain, while every future caster would have to remember to set the flag — rejected.
+       Only the texel snapping in world.update below is kept (that one is a real quality fix). */
     this.camera = new THREE.PerspectiveCamera(72, 1, 0.05, 420);
     this.audio = new Audio();
     this.state = 'menu';
     this.timeScale = 1;
     this.paused = false;
     this.tacticalPause = false;
-    /* 任务生命周期：missionEpoch 每次 deploy() 自增，later() 调度的回调
-       若发现 epoch 已变（或已不在行动中）就直接放弃执行。
-       _timers 收集所有受任务约束的定时器，disposeMission() 会全部取消。 */
+    /* Mission lifecycle: missionEpoch increments on every deploy(); callbacks scheduled with later()
+       bail out if the epoch has changed (or the mission is no longer running).
+       _timers collects every mission-bound timer; disposeMission() cancels them all. */
     this.missionEpoch = 0;
     this._timers = new Set();
-    this._coverScratch = [];      // findCoverFor 的复用查询缓冲
+    this._coverScratch = [];      // reused query buffer for findCoverFor
     this.rng = makeRng(991);
     this.resizeCount = 0;
     this.resize();
-    /* 3. 用 ResizeObserver + DPR 监听替代 onresize：
-          拖动窗口、浏览器缩放（Cmd +/-）、外接屏切换都能覆盖 */
+    /* 3. ResizeObserver + DPR watch instead of onresize:
+          covers window drags, browser zoom (Cmd +/-) and moving between displays */
     this.sizeWatch = watchResize(document.getElementById('app') || document.body, () => this.resize());
     this.bindInput();
     this.screens = new Screens(this);
-    this.tuning = new TuningPanel(this);   // 手感调参面板（P 唤出）
+    this.tuning = new TuningPanel(this);   // feel tuning panel (P)
     this.screens.show('title');
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.canvas;
     });
     this.last = performance.now();
-    /* 性能埋点：用于验证“连续触发闪光弹不卡死”的验收标准 */
+    /* perf instrumentation: verifies the "chained flashbangs never stall" acceptance criterion */
     this.perf = {
       frames: 0, logicSum: 0, logicMax: 0, logicAvg: 0, lastLogic: 0,
       renderMs: 0, lastGap: 0, worstGap: 0, fps: 0, stalls: 0,
@@ -85,13 +85,13 @@ export class Game {
   }
 
   /* ============================================================
-     输入
+     Input
      ============================================================ */
   bindInput() {
     this.input = {
       keys: new Set(), lmb: false, rmb: false,
-      /* lmbPressed 是「本帧新按下」的沿信号，决定半自动/泵动/左轮是否击发。
-         必须在 player.update() 之后再清除，否则在当帧就被吃掉。 */
+      /* lmbPressed is the "pressed this frame" edge, deciding whether semi/pump/revolver fire.
+         It must be cleared after player.update(), or it gets eaten in the same frame. */
       lmbPressed: false,
     };
     const canvas = this.canvas;
@@ -101,7 +101,7 @@ export class Game {
       this.input.keys.add(e.code);
       if (e.code === 'Tab') { e.preventDefault(); if (this.state === 'play') this.toggleTacMap(); return; }
       if (e.code === 'Escape') { if (this.state === 'play') this.togglePause(true); return; }
-      /* ---- 调参面板快捷键（不依赖游戏状态） ---- */
+      /* ---- tuning panel shortcuts (independent of game state) ---- */
       if (this.tuning) {
         if (e.code === 'KeyP') { e.preventDefault(); this.tuning.toggle(); return; }
         if (e.code === 'KeyO') { e.preventDefault(); this.tuning.toggleOverlay(); return; }
@@ -123,12 +123,12 @@ export class Game {
       if (e.code === 'KeyE') this.player.doInteract();
       if (e.code === 'KeyF') {
         this.lightOn = !this.lightOn;
-        this.log(this.lightOn ? '战术灯开启 — 观察距离提升，但也更易被发现' : '战术灯关闭 — 隐蔽性提升', '');
+        this.log(this.lightOn ? 'Weapon light ON — longer sight range, easier to spot' : 'Weapon light OFF — harder to spot', '');
         this.audio.click(0.2, 1500);
       }
       if (e.code === 'KeyM') {
         this.audio.setMuted(!this.audio.muted);
-        this.log(this.audio.muted ? '音频已静音' : '音频已开启', '');
+        this.log(this.audio.muted ? 'Audio muted' : 'Audio on', '');
       }
       if (e.code === 'Digit1') this.issueOrder('follow');
       if (e.code === 'Digit2') this.issueOrder('hold');
@@ -148,7 +148,7 @@ export class Game {
       if (e.button === 0) { this.input.lmb = true; this.input.lmbPressed = true; }
       if (e.button === 2) this.input.rmb = true;
       if (e.button === 1) { e.preventDefault(); this.player.switchWeapon(); }
-      // 点击画面 = 回到鼠标视角
+      // clicking the view = back to mouse look
       if (this.cursorMode) this.setCursorMode(false);
       else if (!this.locked && !this.tacmap?.open) this.requestLock();
     });
@@ -167,7 +167,7 @@ export class Game {
       this.player.switchWeapon();
     }, { passive: false });
 
-    // 指令栏点击由 Screens 的事件委托统一处理（见 screens.js wire()）
+    // command bar clicks are handled by Screens' event delegation (see screens.js wire())
   }
 
   requestLock() {
@@ -175,12 +175,12 @@ export class Game {
     try {
       const p = this.canvas.requestPointerLock();
       if (p && typeof p.catch === 'function') p.catch(() => {});
-    } catch (e) { /* 无用户手势时忽略 */ }
+    } catch (e) { /* ignored without a user gesture */ }
   }
 
   /**
-   * 光标模式：指针锁定期间浏览器会把所有鼠标点击投递给画布，
-   * HUD 上的按钮永远收不到点击。按 Alt 释放指针即可正常点击界面。
+   * Cursor mode: while the pointer is locked the browser delivers every click to the canvas,
+   * so HUD buttons never receive them. Alt releases the pointer so the UI can be clicked.
    */
   setCursorMode(on) {
     if (this.state !== 'play') return;
@@ -189,7 +189,7 @@ export class Game {
     this.cursorMode = on;
     if (on) {
       if (document.exitPointerLock) document.exitPointerLock();
-      this.log('鼠标已释放 — 可点击指令按钮（Alt 或点击画面恢复视角）', '');
+      this.log('Cursor free — click orders. Alt or click the view to resume', '');
       this.audio.click(0.16, 1400);
     } else {
       this.requestLock();
@@ -198,12 +198,12 @@ export class Game {
   }
 
   /* ============================================================
-     部署任务
+     Deploy
      ============================================================ */
   deploy(loadout) {
     this.disposeMission();
-    /* 自增 epoch：即便有回调在 clearTimers() 之前就已进入事件队列，
-       也会因为 epoch 不匹配而放弃执行（见 later()）。 */
+    /* bump the epoch: even callbacks already queued before clearTimers()
+       bail out on the epoch mismatch (see later()). */
     this.missionEpoch++;
     this.audio.init();
     this.audio.resume();
@@ -224,15 +224,15 @@ export class Game {
     this.focusMarker = null;
     this.boundPhase = 0;
     this.boundTimer = 0;
-    this.elementDone = [false, false];   // 交替掩护：两个小组是否已抵达航点
+    this.elementDone = [false, false];   // bounding overwatch: has each element reached the waypoint
     this.weaponsFree = false;
     this.alarmRaised = false;
     this.alertPulse = 0;
     this.camShake = 0; this.camShakeY = 0; this.camShakeZ = 0;
     this.cursorMode = false;
     this.tacticalPause = false;
-    /* 必须重置：暂停菜单 →「中止并返回主菜单」/「重新开始」都会走到 deploy()，
-       若沿用上一局的 paused=true，主循环里 ts 恒为 0，新一局完全冻结。 */
+    /* Must reset: the pause menu's "abort to main menu" / "restart" both go through deploy();
+       carrying over paused=true pins ts to 0 in the main loop and the new mission is frozen solid. */
     this.paused = false;
     this._clearReported = false;
     this.missionTime = 0;
@@ -242,24 +242,24 @@ export class Game {
     this.beats = [];
     this.squadOrder = 'follow';
     this.stats = { shots: 0, hits: 0, blindShots: 0, orders: 0, gadgets: 0, revives: 0, detonations: 0 };
-    this.mapEvents = [];        // 地图事件点（黄色）
+    this.mapEvents = [];        // map event dots (yellow)
     this.objectiveState = {
       manifest: 'active', evidence: 'active', civilians: 'active',
       suspects: 'active', extract: 'pending',
     };
     this.counters = { detained: 0, killed: 0, civLost: 0, civSafe: 0, squadDown: 0 };
 
-    /* --- 队长 --- */
+    /* --- team lead --- */
     const sp = this.world.spawns.player;
     this.player = new Player(this, { x: sp.x, z: sp.z, yaw: sp.yaw, loadout: this.loadout });
     this.actors.push(this.player);
 
-    /* --- 小队 --- */
+    /* --- squad --- */
     this.roster = [
-      { callsign: 'ARDEN-2', name: 'K. 阿登', tag: 'RIFLEMAN · 侦察' },
-      { callsign: 'BRAM-3', name: 'S. 布拉姆', tag: 'RIFLEMAN · 火力' },
-      { callsign: 'CIRA-4', name: 'M. 席拉', tag: 'BREACHER · 突击' },
-      { callsign: 'DOV-5', name: 'L. 多夫', tag: 'MEDIC · 支援' },
+      { callsign: 'ARDEN-2', name: 'K. Arden', tag: 'RIFLEMAN · RECON' },
+      { callsign: 'BRAM-3', name: 'S. Bram', tag: 'RIFLEMAN · FIRE SUPPORT' },
+      { callsign: 'CIRA-4', name: 'M. Cira', tag: 'BREACHER · ENTRY' },
+      { callsign: 'DOV-5', name: 'L. Dov', tag: 'MEDIC · SUPPORT' },
     ];
     this.roster.forEach((r, i) => {
       const s = this.world.spawns.squad[i];
@@ -267,39 +267,39 @@ export class Game {
       this.squad.push(m); this.actors.push(m);
     });
 
-    /* --- 嫌疑人 --- */
+    /* --- suspects --- */
     this.world.suspects.forEach((cfg) => {
       const pos = cfg.patrol ? { x: cfg.patrol[0][0], z: cfg.patrol[0][1] } : { x: cfg.post[0], z: cfg.post[1] };
       const s = new Suspect(this, { ...cfg, x: pos.x, z: pos.z, yaw: Math.random() * TAU });
       this.suspects.push(s); this.actors.push(s);
     });
 
-    /* --- 平民 --- */
+    /* --- civilians --- */
     this.world.civilians.forEach((cfg) => {
       const c = new Civilian(this, cfg);
       this.civilians.push(c); this.actors.push(c);
     });
 
-    /* --- 任务物品 --- */
+    /* --- mission items --- */
     this.objectiveProps = {};
     const folder = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 0.26),
       new THREE.MeshStandardMaterial({ color: 0xc8b68a, roughness: 0.8 }));
     folder.position.set(-31.4, 0.87, -23.5);
     this.scene.add(folder);
-    this.objectiveProps.manifest = { mesh: folder, x: -31.4, z: -23.5, label: '货运货单', taken: false };
+    this.objectiveProps.manifest = { mesh: folder, x: -31.4, z: -23.5, label: 'cargo manifest', taken: false };
     this.objectiveProps.manifestGlow = this.addGlow(-31.4, 1.2, -23.5);
 
     const drive = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.16),
       new THREE.MeshStandardMaterial({ color: 0x2a343d, emissive: 0x1c5f74, emissiveIntensity: 0.9, roughness: 0.5 }));
     drive.position.set(47.0, 1.42, -38.8);
     this.scene.add(drive);
-    this.objectiveProps.evidence = { mesh: drive, x: 47.0, z: -38.8, label: '调度室证据', taken: false };
+    this.objectiveProps.evidence = { mesh: drive, x: 47.0, z: -38.8, label: 'dispatch evidence', taken: false };
     this.objectiveProps.evidenceGlow = this.addGlow(47.0, 1.7, -38.8);
 
     this.world.objectives.manifest.x = -31.4; this.world.objectives.manifest.z = -23.5;
     this.world.objectives.evidence.x = 47.0; this.world.objectives.evidence.z = -38.8;
 
-    /* --- 撤离 / 焦点标记 --- */
+    /* --- exfil / focus markers --- */
     const ex = this.world.objectives.extract;
     this.extractRing = new THREE.Mesh(
       new THREE.RingGeometry(2.6, 3.0, 32),
@@ -315,7 +315,7 @@ export class Game {
     this.focusRing.visible = false;
     this.scene.add(this.focusRing);
 
-    /* --- 武器战术灯 --- */
+    /* --- weapon light --- */
     this.lightOn = true;
     this.weaponLight = new THREE.SpotLight(0xe8f2ff, 92, 52, 0.55, 0.80, 1.5);
     this.weaponLight.position.set(0, 0, 0);
@@ -334,8 +334,8 @@ export class Game {
     this.screens.showGame();
     this.requestLock();
     this.setBeats();
-    this.log('行动开始 — 子午线港 三号泊位', 'good');
-    this.ui.radio('调度 · MERIDIAN', 'ARDEN 小队，调度室在 22:58 后失联。进入港区，确认现场情况。');
+    this.log('Operation live — Meridian Port, Berth 3', 'good');
+    this.ui.radio('DISPATCH · MERIDIAN', 'ARDEN, dispatch office dark since 22:58. Enter the port and confirm the situation.');
   }
 
   addGlow(x, y, z) {
@@ -346,12 +346,12 @@ export class Game {
   }
 
   disposeMission() {
-    /* 先取消上一局遗留的定时器：否则「中止 → 立即重新部署」时，
-       旧回调仍会执行，去改已经废弃的演员对象，甚至把新一局直接判负。 */
+    /* Cancel the previous mission's timers first: otherwise on "abort → redeploy at once"
+       old callbacks still run, touch dead actors, and can even fail the new mission outright. */
     this.clearTimers();
-    /* ---- 释放「不在场景图里」的 GPU 资源 ----
-       scene.traverse 只能扫到挂进场景图的对象；下面这些逃逸在外，
-       实测每次重新部署会净增约 8 张纹理、25 个 geometry 与若干 framebuffer。 */
+    /* ---- free GPU resources that live outside the scene graph ----
+       scene.traverse only reaches objects in the graph; these escape it.
+       Measured: each redeploy used to leak ~8 textures, 25 geometries and several framebuffers. */
     if (this.scene) {
       if (this.scene.background && this.scene.background.dispose) this.scene.background.dispose();
       this.scene.background = null;
@@ -362,7 +362,7 @@ export class Game {
       if (this.world.skyTex && this.world.skyTex.dispose) this.world.skyTex.dispose();
       const L = this.world.lights;
       if (L) {
-        /* 月光的 2048² 阴影贴图是一张 render target，必须显式释放 */
+        /* the moon's 2048² shadow map is a render target and must be freed explicitly */
         for (const key of ['moon', 'hemi']) {
           const li = L[key];
           if (li && li.shadow && li.shadow.map) { li.shadow.map.dispose(); li.shadow.map = null; }
@@ -393,7 +393,7 @@ export class Game {
     if (this.ui) {
       this.ui.el.log.innerHTML = '';
       this.ui.el.radio.innerHTML = '';
-      /* ResizeObserver 必须断开：否则旧 HUD（含离屏小地图画布）会被闭包永久持有 */
+      /* the ResizeObserver must be disconnected, or the old HUD (with its offscreen minimap canvas) is retained forever by the closure */
       if (this.ui.sizeWatch && this.ui.sizeWatch.disconnect) this.ui.sizeWatch.disconnect();
       this.ui = null;
     }
@@ -414,10 +414,10 @@ export class Game {
   }
 
   /* ============================================================
-     受任务生命周期约束的定时器
+     Mission-bound timers
      ------------------------------------------------------------
-     所有会改动任务状态（演员、目标、结算）的延时回调都必须走这里，
-     不要直接用 setTimeout —— 它不会随 abort()/重新部署而取消。
+     Every delayed callback that changes mission state (actors, objectives, debrief) must go through here.
+     Don't use setTimeout directly — it isn't cancelled by abort()/redeploy.
      ============================================================ */
   later(ms, fn) {
     const epoch = this.missionEpoch;
@@ -438,14 +438,14 @@ export class Game {
 
   setBeats() {
     this.beats = [
-      { t: 4, done: false, fn: () => this.ui.radio('ARDEN-2 · K.阿登', '队长，雾太重，光点看不远。我先看，你下令。') },
-      { t: 11, done: false, fn: () => this.ui.say('按住 空格 进入战术暂停，时间会减慢。用准星压住目标直到识别完成 —— 再下令。', null, 8) },
-      { t: 26, done: false, fn: () => this.ui.radio('调度 · MERIDIAN', '注意，港区内仍有夜班工人在岗。识别完成前不要开火。') },
+      { t: 4, done: false, fn: () => this.ui.radio('ARDEN-2 · K. ARDEN', 'Lead, fog\'s thick — lights don\'t carry. I\'ll spot, you call it.') },
+      { t: 11, done: false, fn: () => this.ui.say('Hold SPACE for tactical pause — time slows. Keep the reticle on a contact until ID completes. Then give the order.', null, 8) },
+      { t: 26, done: false, fn: () => this.ui.radio('DISPATCH · MERIDIAN', 'Be advised, night crew still on site. No shots before positive ID.') },
     ];
   }
 
   /* ============================================================
-     指令系统
+     Orders
      ============================================================ */
   issueOrder(cmd) {
     if (this.state !== 'play') return;
@@ -458,7 +458,7 @@ export class Game {
       const hit = castRay(this, eye.x, eye.y, eye.z, f.x, f.y, f.z, 95, this.player);
       const p = hit.point;
       if (dist2D(p.x, p.z, this.player.pos.x, this.player.pos.z) < 4) {
-        this.log('移动清场 — 落点过近，请瞄准远处地面或目标', 'warn');
+        this.log('Move & clear — point too close. Aim at distant ground or a target', 'warn');
         return;
       }
       this.issueClearAt(p.x, p.z);
@@ -472,9 +472,9 @@ export class Game {
     for (const m of list) if (m.alive) m.lastOrder = cmd;
     this.audio.radio('out');
     const name = ORDER_NAMES[cmd];
-    if (cmd === 'follow') this.log(`指令 · ${name.cn} — 小队按楔形队形跟随`, 'good');
-    else if (cmd === 'hold') this.log(`指令 · ${name.cn} — 小队原地警戒`, 'good');
-    else if (cmd === 'regroup') this.log(`指令 · ${name.cn} — 小队收拢`, 'good');
+    if (cmd === 'follow') this.log(`Order · ${name.label} — squad following in wedge`, 'good');
+    else if (cmd === 'hold') this.log(`Order · ${name.label} — squad holding, eyes out`, 'good');
+    else if (cmd === 'regroup') this.log(`Order · ${name.label} — squad closing on you`, 'good');
     const line = LINES[cmd === 'follow' ? 'onFollow' : cmd === 'hold' ? 'onHold' : 'onClear'];
     if (line) {
       const t = line[Math.floor(Math.random() * line.length)]
@@ -488,23 +488,23 @@ export class Game {
   }
 
   /**
-   * 队员抵达「移动清场」航点时的回调（由 SquadMember 调用）。
-   * 注意：这个方法曾经只被调用、却没有定义 —— 队员一到位就抛
-   * TypeError 并中断整个模拟循环。此方法必须始终存在。
+   * Callback when a squad member reaches the move-and-clear waypoint (called by SquadMember).
+   * Note: this method used to be called but never defined — a member arriving threw
+   * a TypeError and killed the whole simulation loop. It must always exist.
    */
   onElementArrived(member) {
     if (this.squadOrder !== 'clear' || !this.squadWaypoint) return;
     const wp = this.squadWaypoint;
     if (dist2D(member.pos.x, member.pos.z, wp.x, wp.z) >= 3.5) return;
-    this.elementDone[member.element] = true;      // 交替掩护：该组已到位
+    this.elementDone[member.element] = true;      // bounding overwatch: this element is in position
     const alive = this.squad.filter((m) => m.alive);
     const allOnPoint = alive.length > 0 &&
       alive.every((m) => dist2D(m.pos.x, m.pos.z, wp.x, wp.z) < 3.5);
     if (allOnPoint && !this._clearReported) {
       this._clearReported = true;
-      this.log('区域已清空 — 小队抵达航点', 'good');
+      this.log('Area clear — squad on waypoint', 'good');
       this.audio.radio('in');
-      this.ui.say('ARDEN：清空，区域安全。', null, 2.4);
+      this.ui.say('ARDEN: Clear. Area secure.', null, 2.4);
     }
   }
 
@@ -519,9 +519,9 @@ export class Game {
     this.elementDone = [false, false];
     for (const m of this.squad) { if (m.alive) { m.path = null; m.pathAge = 2; m.lastOrder = 'clear'; } }
     const d = Math.round(dist2D(this.player.pos.x, this.player.pos.z, x, z));
-    this.log(`指令 · 移动清场 — 目标方位 ${d}m，交替掩护推进`, 'good');
+    this.log(`Order · Move & clear — waypoint ${d} m, bounding overwatch`, 'good');
     this.audio.radio('out');
-    this.ui.say('ARDEN：收到，交替推进。', null, 2.4);
+    this.ui.say('ARDEN: Copy. Bounding.', null, 2.4);
     document.querySelectorAll('#command-bar .cmd').forEach((c) => {
       if (c.dataset.cmd === 'clear') { c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 260); }
     });
@@ -556,7 +556,7 @@ export class Game {
   }
 
   /* ============================================================
-     战术暂停 / 地图 / 暂停
+     Tactical pause / map / pause
      ============================================================ */
   setTacticalPause(on) {
     if (this.state !== 'play' || (this.tacmap && this.tacmap.open)) return;
@@ -564,7 +564,7 @@ export class Game {
     this.tacticalPause = on;
     if (on) {
       this.audio.radio('in');
-      this.ui.say('战术暂停 — 观察、下令、再动手', null, 2);
+      this.ui.say('Tactical pause — observe, order, then act', null, 2);
     }
   }
 
@@ -596,15 +596,15 @@ export class Game {
   }
 
   /* ============================================================
-     识别机制
+     Identification
      ------------------------------------------------------------
-     时间基准说明（有意为之，勿随意改成 dt）：
-       · 识别按 rawDt（真实时间）推进，因此「战术暂停」（时间 10%）下
-         依然能全速完成识别 —— 这正是 README 承诺的
-         「按住空格进入战术暂停，可以在不冒风险的情况下完成识别并下达指令」。
-       · 但暂停菜单（ts = 0）必须真正冻结，否则你在菜单里挂着，
-         战场上的识别进度自己涨满了。
-       · 战术地图打开时同理：人在地图上，不该继续积累识别。
+     Time base (deliberate — don't casually switch to dt):
+       · identification advances on rawDt (real time), so under tactical pause (10% time)
+         it still completes at full speed — exactly what the README promises:
+         "hold Space for tactical pause and you can complete identification and give orders without risk".
+       · but the pause menu (ts = 0) must truly freeze, or idling in the menu
+         would fill identification on the battlefield by itself.
+       · same with the tactical map open: you're looking at the map, not accumulating ID.
      ============================================================ */
   updateObservation(rawDt) {
     if (this.paused || (this.tacmap && this.tacmap.open)) return;
@@ -658,19 +658,19 @@ export class Game {
 
   onIdentified(a) {
     if (a.kind === 'suspect') {
-      this.log(`识别确认 — 武装嫌疑人 ${a.name}`, 'warn');
+      this.log(`Positive ID — armed suspect ${a.name}`, 'warn');
       this.audio.radio('in');
     } else if (a.kind === 'civilian') {
-      this.log('识别确认 — 平民 · 非战斗人员', 'good');
-      this.ui.say(`识别为平民（${a.label}）。按 E 护送其撤离。`, null, 4);
+      this.log('Positive ID — civilian, non-combatant', 'good');
+      this.ui.say(`Civilian (${a.label}). Press E to escort out.`, null, 4);
     }
   }
 
   /* ============================================================
-     战斗回调
+     Combat callbacks
      ============================================================ */
   onPlayerShot() {
-    if (!this.alarmRaised) this.raiseAlarm('枪声');
+    if (!this.alarmRaised) this.raiseAlarm('gunfire');
     const t = this.observeTarget;
     if (!t || (t.kind !== 'squad' && !t.identified)) this.stats.blindShots++;
     if (this.viewmodel) this.viewmodel.kick(this.player.def.recoil);
@@ -693,11 +693,11 @@ export class Game {
     const p = this.player;
     const d = dist2D(shooter.pos.x, shooter.pos.z, p.pos.x, p.pos.z);
     if (shooter.kind === 'suspect') {
-      this.addMapEvent(shooter.pos.x, shooter.pos.z, '敌方枪声', 'gunfire');
+      this.addMapEvent(shooter.pos.x, shooter.pos.z, 'Hostile fire', 'gunfire');
     }
     if (shooter.kind === 'suspect' && d < 95) {
       this.audio.gunshot('mr4', d > 30);
-      if (!this.alarmRaised) this.raiseAlarm('交火');
+      if (!this.alarmRaised) this.raiseAlarm('exchange of fire');
       this.alertPulse = 1;
     }
     for (const c of this.civilians) {
@@ -714,8 +714,8 @@ export class Game {
   }
 
   onSuspectAlerted(s, pos) {
-    this.addMapEvent(s.pos.x, s.pos.z, '发现入侵者', 'alarm');
-    if (!this.alarmRaised) this.raiseAlarm('发现入侵者');
+    this.addMapEvent(s.pos.x, s.pos.z, 'Intruders reported', 'alarm');
+    if (!this.alarmRaised) this.raiseAlarm('intruders reported');
   }
 
   raiseAlarm(source) {
@@ -723,8 +723,8 @@ export class Game {
     this.alarmRaised = true;
     this.weaponsFree = true;
     this.alertPulse = 1;
-    this.log(`警讯 — ${source}；小队解除火力限制`, 'bad');
-    this.ui.radio('敌方电台 · 白鹭', LINES.alert[Math.floor(Math.random() * LINES.alert.length)]);
+    this.log(`Alarm — ${source}. Squad weapons free`, 'bad');
+    this.ui.radio('HOSTILE NET · EGRET', LINES.alert[Math.floor(Math.random() * LINES.alert.length)]);
     this.audio.radio('in');
     const origin = this.player.pos;
     for (const s of this.suspects) {
@@ -740,11 +740,11 @@ export class Game {
         });
       }
     }
-    this.ui.say('警讯已扩散 — 嫌疑人正在收拢。保持火力纪律，别打到平民。', null, 4.5);
+    this.ui.say('Alarm is out — suspects converging. Hold fire discipline. Mind the civilians.', null, 4.5);
   }
 
   enemyCall(s) {
-    this.ui.radio('敌方电台 · ' + COMMS.hostileNet, '有人进来了！收拢到货区，别让他们靠近调度楼。');
+    this.ui.radio('HOSTILE NET · ' + COMMS.hostileNet, 'They\'re in! Fall back to the cargo lanes — keep them off dispatch.');
     this.audio.radio('in');
     this.alertPulse = 1;
   }
@@ -758,15 +758,15 @@ export class Game {
       .replace('{dir}', DIRECTIONS[dirIdx]);
     this.ui.say(t, null, 3.2);
     this.audio.radio('in');
-    if (kind === 'squadIdArmed') this.log(`${member.callsign} 报告：武装嫌疑人 · ${DIRECTIONS[dirIdx]}`, 'warn');
-    if (kind === 'squadIdCiv') this.log(`${member.callsign} 报告：平民 · ${DIRECTIONS[dirIdx]}`, 'good');
+    if (kind === 'squadIdArmed') this.log(`${member.callsign}: armed suspect · ${DIRECTIONS[dirIdx]}`, 'warn');
+    if (kind === 'squadIdCiv') this.log(`${member.callsign}: civilian · ${DIRECTIONS[dirIdx]}`, 'good');
   }
 
   civilianCall(c) {
-    this.addMapEvent(c.pos.x, c.pos.z, '发现平民', 'sighting');
+    this.addMapEvent(c.pos.x, c.pos.z, 'Civilian located', 'sighting');
     this.ui.say(LINES.civFound[Math.floor(Math.random() * LINES.civFound.length)], null, 3);
     this.audio.shout();
-    this.log(`${c.label} 已被定位 — 按 E 护送其撤离`, '');
+    this.log(`${c.label} located — press E to escort`, '');
   }
 
   onSquadHurt(m) {
@@ -776,27 +776,27 @@ export class Game {
 
   onSquadDown(m) {
     this.counters.squadDown++;
-    this.addMapEvent(m.pos.x, m.pos.z, '队员伤亡', 'casualty');
+    this.addMapEvent(m.pos.x, m.pos.z, 'Squad casualty', 'casualty');
     this.ui.damage();
     if (m.kind === 'player') {
       this.failed = true;
-      this.failReason = '队长失去行动能力';
-      this.log('队长失去行动能力 —— 行动失败', 'bad');
-      this.ui.say('你失去了行动能力。小队将自行脱离 —— 行动中止。', null, 4);
+      this.failReason = 'Team lead incapacitated';
+      this.log('Team lead incapacitated — operation failed', 'bad');
+      this.ui.say('You are down. The squad will break contact — operation aborted.', null, 4);
       this.audio.hurt();
-      if (this.alarmRaised === false) this.raiseAlarm('队长伤亡');
+      if (this.alarmRaised === false) this.raiseAlarm('team lead down');
       this.later(3200, () => this.finishMission(false));
       return;
     }
-    this.log(`${m.callsign} 失去行动能力！`, 'bad');
-    this.ui.say(`${m.callsign} 中弹倒地 —— 使用急救包（E）可恢复其行动能力。`, null, 5);
-    this.raiseAlarm('队员伤亡');
+    this.log(`${m.callsign} is down!`, 'bad');
+    this.ui.say(`${m.callsign} hit and down — a trauma kit (E) gets them back up.`, null, 5);
+    this.raiseAlarm('squad casualty');
   }
 
   onSuspectDown(s) {
     this.counters.killed++;
-    this.addMapEvent(s.pos.x, s.pos.z, '武装人员被制止', 'casualty');
-    this.log(`嫌疑人 ${s.name} 已被制止`, 'warn');
+    this.addMapEvent(s.pos.x, s.pos.z, 'Armed suspect stopped', 'casualty');
+    this.log(`Suspect ${s.name} stopped`, 'warn');
     for (const o of this.suspects) {
       if (!o.alive || o === s) continue;
       if (dist2D(o.pos.x, o.pos.z, s.pos.x, s.pos.z) < 16) {
@@ -808,7 +808,7 @@ export class Game {
   }
 
   onSuspectSurrender(s) {
-    this.log(`${s.name} 已投降 — 上前拘押（E）可获得更佳评估`, 'good');
+    this.log(`${s.name} surrendering — move in and detain (E) for a better assessment`, 'good');
     this.ui.say(LINES.surrender[Math.floor(Math.random() * LINES.surrender.length)], null, 3);
     this.audio.shout();
     for (const o of this.suspects) {
@@ -819,23 +819,23 @@ export class Game {
 
   onDetained(s) {
     this.counters.detained++;
-    this.log(`${s.name} 已被拘押`, 'good');
+    this.log(`${s.name} detained`, 'good');
     this.audio.click(0.3, 1200);
     this.checkSuspectsDone();
   }
 
   onCivilianDown(c) {
     this.counters.civLost++;
-    this.addMapEvent(c.pos.x, c.pos.z, '平民伤亡', 'casualty');
+    this.addMapEvent(c.pos.x, c.pos.z, 'Civilian casualty', 'casualty');
     this.failed = true;
-    this.failReason = '平民伤亡';
-    this.log(`平民伤亡 — ${c.label}`, 'bad');
-    this.ui.say('平民出现伤亡 —— 行动已被判定为失败条件。', null, 5);
+    this.failReason = 'Civilian casualty';
+    this.log(`Civilian casualty — ${c.label}`, 'bad');
+    this.ui.say('Civilian casualty — mission failure condition met.', null, 5);
   }
 
   onCivilianSafe(c) {
     this.counters.civSafe++;
-    this.log(`平民安全撤离 — ${c.label}（${this.counters.civSafe}/${this.civilians.length}）`, 'good');
+    this.log(`Civilian safe — ${c.label} (${this.counters.civSafe}/${this.civilians.length})`, 'good');
     this.audio.chime(true);
     if (this.counters.civSafe + this.counters.civLost >= this.civilians.length) {
       this.objectiveState.civilians = this.counters.civLost === 0 ? 'done' : 'failed';
@@ -844,19 +844,19 @@ export class Game {
   }
 
   onEscortStarted(c) {
-    this.log(`护送 ${c.label} — 前往南门集结区`, '');
+    this.log(`Escorting ${c.label} — to south gate RV`, '');
     this.audio.click(0.24, 1100);
   }
 
   onObjectiveTaken(key, prop) {
     prop.taken = true;
-    this.addMapEvent(prop.x, prop.z, key === 'manifest' ? '货单已取回' : '证据已提取', 'intel');
+    this.addMapEvent(prop.x, prop.z, key === 'manifest' ? 'Manifest recovered' : 'Evidence secured', 'intel');
     if (prop.mesh) prop.mesh.visible = false;
     const glow = this.objectiveProps[key + 'Glow'];
     if (glow) glow.intensity = 0;
     this.objectiveState[key] = 'done';
     this.audio.chime(true);
-    this.log(key === 'manifest' ? '目标完成 — 货运货单已取回' : '目标完成 — 调度室证据已提取', 'good');
+    this.log(key === 'manifest' ? 'Objective complete — cargo manifest recovered' : 'Objective complete — dispatch evidence secured', 'good');
     this.ui.say(key === 'manifest' ? LINES.objManifest[0] : LINES.objEvidence[0], null, 3);
     this.checkExtractReady();
   }
@@ -865,7 +865,7 @@ export class Game {
     const remaining = this.suspects.filter((s) => s.alive && !s.detained && !s.surrendered).length;
     if (remaining === 0) {
       this.objectiveState.suspects = 'done';
-      this.log('目标完成 — 现场武装嫌疑人已全部处理', 'good');
+      this.log('Objective complete — all armed suspects dealt with', 'good');
       this.audio.chime(true);
     }
   }
@@ -878,22 +878,22 @@ export class Game {
     if (civs === 'active') {
       if (!this._extractHinted) {
         this._extractHinted = true;
-        this.log('情报已回收 — 仍需完成平民撤离，撤离点暂未开放', 'warn');
-        this.ui.radio('调度 · MERIDIAN', '情报收到。先把夜班工人带出仓区，之后返回南门撤离。');
+        this.log('Intel recovered — civilians still on site. Exfil not open', 'warn');
+        this.ui.radio('DISPATCH · MERIDIAN', 'Intel received. Get the night crew out first, then RTB south gate.');
         this.audio.radio('in');
       }
       return;
     }
     if (civs === 'done' || civs === 'failed') {
       this.objectiveState.extract = 'active';
-      this.log('撤离点已激活 — 返回南门装甲车', 'good');
-      this.ui.radio('调度 · MERIDIAN', '情报回收完毕。小队返回南门，装甲车已待命。');
+      this.log('Exfil open — RTB, APC at south gate', 'good');
+      this.ui.radio('DISPATCH · MERIDIAN', 'Intel complete. RTB south gate, APC standing by.');
       this.audio.radio('in');
-      this.ui.say('撤离点已激活 — 南门装甲车（战术地图 Tab 可查看）', null, 5);
+      this.ui.say('Exfil open — APC at south gate (Tab for map)', null, 5);
     }
   }
 
-  /** 平民状态变化后重新评估撤离条件 */
+  /** Re-evaluate exfil conditions after a civilian state change */
   reevaluateExtract() {
     const intel = this.objectiveState.manifest === 'done' && this.objectiveState.evidence === 'done';
     if (intel && this.objectiveState.extract === 'pending') this.checkExtractReady();
@@ -933,19 +933,19 @@ export class Game {
 
     let comment;
     if (!success && this.counters.civLost > 0) {
-      comment = '平民伤亡使行动失去意义。情报可以再取，人不能。下一次，把观察放在扳机之前。';
-    } else if (!success && this.failReason === '队长失去行动能力') {
-      comment = '队长失去行动能力，行动被迫中止。小队在无指挥状态下脱离了港区 —— 保持掩体、别把自己留在开阔地。';
+      comment = 'A civilian died. That cancels everything else. Intel can be recovered again; people cannot. Next time, observation comes before the trigger.';
+    } else if (!success && this.failReason === 'Team lead incapacitated') {
+      comment = 'Team lead down; operation aborted. The squad withdrew without command. Stay in cover — don\'t leave yourself in the open.';
     } else if (!success) {
-      comment = '行动未能达成主要目标。若时间允许，先用战术暂停理清现场再推进；港区里有太多角落可以藏人。';
+      comment = 'Primary objectives not met. Use tactical pause to read the ground before pushing; the port has too many corners to hide in.';
     } else if (this.stats.blindShots > 8) {
-      comment = '射击次数不少，但多数开火发生在识别完成之前。雾里的轮廓会骗人 —— 用战术暂停换时间。';
+      comment = 'Plenty of rounds fired, most of them before ID was complete. Silhouettes lie in fog — buy time with tactical pause.';
     } else if (this.counters.detained >= 3) {
-      comment = '优秀的武力使用控制。多数嫌疑人被活着拘押，这将直接影响后续的取证与审讯。';
+      comment = 'Excellent use-of-force control. Most suspects taken alive — that carries straight into evidence and interviews.';
     } else if (this.counters.squadDown > 0) {
-      comment = '完成了任务，但代价偏高。交替掩护与掩体使用可以进一步降低伤亡。';
+      comment = 'Mission complete, at a cost. Tighter bounding and cover use would have kept the squad on its feet.';
     } else {
-      comment = '流程干净、节奏克制。小队的推进与火力纪律都符合警备处的标准作业程序。';
+      comment = 'Clean and measured. Movement and fire discipline to Port Security SOP.';
     }
 
     return {
@@ -966,7 +966,7 @@ export class Game {
   }
 
   /* ============================================================
-     工具
+     Utilities
      ============================================================ */
   losBlocked(ax, ay, az, bx, by, bz) {
     return losBlocked(this.world.grid, ax, ay, az, bx, by, bz);
@@ -1031,9 +1031,9 @@ export class Game {
   }
 
   alertLevel() {
-    if (this.alarmRaised) return { text: '接敌 · 警讯已扩散', cls: 'hot' };
-    if (this.suspects.some((s) => s.awareness > 0.2)) return { text: '可疑动静', cls: 'warn' };
-    return { text: '安静', cls: 'calm' };
+    if (this.alarmRaised) return { text: 'Contact · alarm out', cls: 'hot' };
+    if (this.suspects.some((s) => s.awareness > 0.2)) return { text: 'Movement', cls: 'warn' };
+    return { text: 'Quiet', cls: 'calm' };
   }
 
   clockString() {
@@ -1046,13 +1046,13 @@ export class Game {
   shake(mag, dur) { this.camShake = Math.max(this.camShake, mag); this.camShakeDur = dur; }
 
   /* ------------------------------------------------------------
-     地图事件点：枪声 / 警讯 / 爆炸 / 情报 / 伤亡 …
-     战术地图与小地图用黄点显示，随时间淡出
+     Map event dots: gunfire / alarm / explosion / intel / casualty …
+     shown as yellow dots on the tactical map and minimap, fading over time
      ------------------------------------------------------------ */
   addMapEvent(x, z, label, kind = 'event') {
     if (!this.mapEvents) return;
     const now = this.missionTime;
-    // 同类事件 4 秒内、且位置相近的只保留一条，避免刷屏
+    // same kind within 4 s and nearby: keep only one, to avoid spam
     for (let i = this.mapEvents.length - 1; i >= 0; i--) {
       const e = this.mapEvents[i];
       if (e.kind === kind && now - e.t < 4 && dist2D(e.x, e.z, x, z) < 8) return;
@@ -1062,11 +1062,11 @@ export class Game {
   }
 
   /* ------------------------------------------------------------
-     地图调试接口：window.__mapDebug
-     约定：世界坐标用 (x, z)，z 即通常说的「y 轴」。
-     __mapDebug.worldToMap(x, z)        → 小地图（玩家朝上，随转向旋转）
-     __mapDebug.worldToMapTac(x, z)     → 战术地图（北朝上，固定）
-     两者都接受 {x, z} 对象形式；返回值直接是 CSS 像素坐标。
+     Map debug interface: window.__mapDebug
+     Convention: world coordinates are (x, z); z is what is usually called the "y axis".
+     __mapDebug.worldToMap(x, z)        → minimap (heading up, rotates with the player)
+     __mapDebug.worldToMapTac(x, z)     → tactical map (north up, fixed)
+     Both also accept an {x, z} object; results are CSS pixel coordinates.
      ------------------------------------------------------------ */
   installMapDebug() {
     const self = this;
@@ -1075,7 +1075,7 @@ export class Game {
       get mode() { return 'minimap=player-up(rotating) / tacmap=north-up(fixed)'; },
       get yawRad() { return self.player ? self.player.yaw : 0; },
       get yawDeg() { return self.player ? +(self.player.yaw * 180 / Math.PI).toFixed(2) : 0; },
-      /* 注意：本项目 yaw 减小 = 实际右转（见 player.look()），yaw 增大 = 左转 */
+      /* note: in this project decreasing yaw = turning right (see player.look()), increasing = left */
       get player() {
         const p = self.player;
         return p ? { x: +p.pos.x.toFixed(3), y: +p.pos.z.toFixed(3), yaw: +p.yaw.toFixed(6) } : null;
@@ -1097,7 +1097,7 @@ export class Game {
         }
         return { stats: { ...t.labelStats }, items };
       },
-      /* 小地图地名标签（同样带可见性统计） */
+      /* minimap place-name labels (with visibility stats too) */
       get labelsMini() {
         const u = self.ui;
         if (!u) return { stats: null, items: [] };
@@ -1108,14 +1108,14 @@ export class Game {
         }
         return { stats: { ...u.labelStats }, items };
       },
-      /* 世界 → 小地图像素（旋转，玩家朝上） */
+      /* world → minimap pixels (rotated, heading up) */
       worldToMap(a, b) {
         const [x, z] = arg(a, b);
         if (!self.ui) return null;
         const o = self.ui.worldToMap(x, z, { x: 0, y: 0 });
         return { x: +o.x.toFixed(2), y: +o.y.toFixed(2) };
       },
-      /* 世界 → 战术地图像素（北朝上，固定） */
+      /* world → tactical map pixels (north up, fixed) */
       worldToMapTac(a, b) {
         const [x, z] = arg(a, b);
         if (!self.tacmap) return null;
@@ -1132,10 +1132,10 @@ export class Game {
   }
 
   /* ============================================================
-     主循环
+     Main loop
      ============================================================ */
-  /* 纯模拟步进：不渲染、不调度。正常循环与固定步长测试共用同一段逻辑，
-     因此测试结果与实机行为严格一致。 */
+  /* Pure simulation step: no rendering, no scheduling. The normal loop and fixed-step tests share this code,
+     so test results match live behaviour exactly. */
   advance(dt, rawDt) {
     this.missionTime += dt;
     this.clock += dt * 3.2;
@@ -1144,8 +1144,8 @@ export class Game {
       if (!b.done && this.missionTime >= b.t) { b.done = true; b.fn(); }
     }
     this.player.update(dt, this.input);
-    this.input.lmbPressed = false;   // 沿信号只对本次 update 有效
-    /* 调参面板的「冻结敌人 AI」开关：只跳过非玩家角色，玩家手感不受影响 */
+    this.input.lmbPressed = false;   // the edge signal is only valid for this update
+    /* tuning panel "freeze hostile AI": skips only non-player actors; player feel is unaffected */
     if (!feel.debug.freezeAI) {
       for (const a of this.actors) {
         if (a === this.player) continue;
@@ -1180,18 +1180,18 @@ export class Game {
       if (this.scene && this.renderer) this.renderer.render(this.scene, this.camera);
       return;
     }
-    /* 测试模式：外部以固定步长调用 advance()，结果可复现；正常游玩不受影响 */
+    /* test mode: advance() is called externally at a fixed step, reproducible; normal play unaffected */
     if (this.testMode) return;
     if (this.tuning) this.tuning.update(rawDt);
 
 
     const t0 = performance.now();
-    // 帧间隔统计（含渲染），用于验收“帧率不低于 50”
+    // frame gap stats (including render), for the "frame rate ≥ 50" acceptance check
     const gap = t0 - this.perf._gapT;
     this.perf._gapT = t0;
     this.perf.lastGap = gap;
     if (gap > this.perf.worstGap) this.perf.worstGap = gap;
-    if (gap > 250) this.perf.stalls++;          // 明显卡顿计数
+    if (gap > 250) this.perf.stalls++;          // visible stall counter
     this.perf.fps = gap > 0 ? 1000 / gap : 0;
 
     let ts = 1;
@@ -1202,7 +1202,7 @@ export class Game {
     const dt = rawDt * ts;
     this.advance(dt, rawDt);
 
-    /* ---- 逻辑耗时（不含渲染）：主线程是否被阻塞看这个指标 ---- */
+    /* ---- logic time (excluding render): the metric for whether the main thread is blocked ---- */
     const t1 = performance.now();
     const logicMs = t1 - t0;
     this.perf.frames++;
@@ -1212,24 +1212,30 @@ export class Game {
     if (logicMs > this.perf.logicMax) this.perf.logicMax = logicMs;
     if (logicMs > 120 && !this._stallWarned) {
       this._stallWarned = true;
-      console.warn('[SILENT MERIDIAN] 单帧逻辑耗时异常：' + logicMs.toFixed(1) + 'ms');
+      console.warn('[SILENT MERIDIAN] slow logic frame: ' + logicMs.toFixed(1) + 'ms');
     }
 
+    this.renderFrame();
+    this.perf.renderMs = performance.now() - t1;
+
+    // push live metrics to the debug panel (D)
+    if (window.__SM_DEBUG && t1 - this.perf._lastPush > 400) {
+      this.perf._lastPush = t1;
+      window.__SM_DEBUG.perf = this.perf;
+      window.__SM_DEBUG.audio = this.audio.stats();
+      window.__SM_DEBUG.projectiles = this.projectiles.length;
+    }
+  }
+
+  /* Render only, no simulation step. The normal loop calls it once per frame;
+     under ?test=1 rAF doesn't render, so external tools (tools/shots-fixed.mjs) call it after advance(). */
+  renderFrame() {
     this.renderer.autoClear = true;
     this.renderer.render(this.scene, this.camera);
     if (this.viewmodel) {
       this.renderer.autoClear = false;
       this.viewmodel.render(this.renderer);
       this.renderer.autoClear = true;
-    }
-    this.perf.renderMs = performance.now() - t1;
-
-    // 把实时指标推给调试面板（按 D 唤出）
-    if (window.__SM_DEBUG && t1 - this.perf._lastPush > 400) {
-      this.perf._lastPush = t1;
-      window.__SM_DEBUG.perf = this.perf;
-      window.__SM_DEBUG.audio = this.audio.stats();
-      window.__SM_DEBUG.projectiles = this.projectiles.length;
     }
   }
 
@@ -1248,9 +1254,9 @@ export class Game {
 
   updateBound(dt) {
     if (this.squadOrder !== 'clear' || !this.squadWaypoint) return;
-    /* 两个小组都已推进到位 ⇒ 交替掩护完成。
-       此前 elementDone 只写不读，这里会每 5.5s 无限翻转阶段，
-       并把已经站好位的队员的路径反复清空。 */
+    /* both elements in position ⇒ bounding overwatch complete.
+       elementDone used to be write-only, so this flipped phase every 5.5 s forever
+       and repeatedly cleared the paths of members already in position. */
     if (this.elementDone[0] && this.elementDone[1]) return;
     this.boundTimer -= dt;
     const wp = this.squadWaypoint;
@@ -1277,8 +1283,8 @@ export class Game {
         this.finishMission(!this.failed);
       } else if (this.missionTime - (this._extractWarnAt || -99) > 7) {
         this._extractWarnAt = this.missionTime;
-        this.log('撤离需要小队在场 — 等待队员跟进', 'warn');
-        this.ui.say('撤离需要小队在场 —— 等待队员跟进（可用「归队」或战术地图下达指令）', null, 3.4);
+        this.log('Exfil needs the squad — waiting for them to close', 'warn');
+        this.ui.say('Exfil needs the squad present — waiting on them (order Regroup, or use the map)', null, 3.4);
       }
     }
   }
@@ -1292,9 +1298,9 @@ export class Game {
     }
   }
 
-  /* 屏幕震动按真实时间（rawDt）衰减，与 timeScale 无关 —— 这是有意的：
-     震动是纯视觉反馈，暂停时若冻结在半途，画面会在暂停菜单里持续抖动。
-     形参名与调用点统一为 rawDt，避免被误读成「已经过 timeScale 的 dt」。 */
+  /* Screen shake decays on real time (rawDt), independent of timeScale — deliberately:
+     shake is purely visual feedback; frozen halfway in a pause it would keep jittering in the pause menu.
+     The parameter is named rawDt at both definition and call site so it isn't mistaken for a timescaled dt. */
   updateShake(rawDt) {
     if (this.camShake > 0.001) {
       this.camShake *= Math.exp(-rawDt * feel.feedback.shakeDecay);
