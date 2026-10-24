@@ -1,7 +1,7 @@
 {
   "v": "1.1.0",
-  "hash": "eb367d183646",
-  "at": "2026-10-24T02:04:09.452Z",
+  "hash": "0c1aef32813e",
+  "at": "2026-10-24T02:24:58.655Z",
   "inputs": {
     "src/actors.js": "3c6adc70f747",
     "src/audio.js": "06f2eb24e64a",
@@ -9,7 +9,7 @@
     "src/combat.js": "36901558a585",
     "src/data.js": "f6aac55f51f6",
     "src/feel.js": "85b010c1dc41",
-    "src/game.js": "9cec331affa7",
+    "src/game.js": "84c03aa125ce",
     "src/geom.js": "e2c223fb74bc",
     "src/hud.js": "ddd9c62ade6a",
     "src/main.js": "beb990b07051",
@@ -18,10 +18,10 @@
     "src/player.js": "247786cdc7db",
     "src/screens.js": "88423ae9c3a9",
     "src/tacmap.js": "3ddcb0894fc7",
-    "src/textures.js": "fe6600538ce1",
+    "src/textures.js": "33a5f97777c3",
     "src/tuning.js": "99c05b1280b8",
     "src/viewmodel.js": "1c38d5900664",
-    "src/world.js": "4c3eebfc4d95",
+    "src/world.js": "b0c7e1b2af50",
     "index.html": "9ff7f09b3b74",
     "styles/ui.css": "ddee8de9b74d"
   }

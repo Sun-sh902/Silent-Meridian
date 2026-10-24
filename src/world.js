@@ -27,6 +27,29 @@ function nonIndexed(g) {
   return c;
 }
 
+/* ============================================================
+   Light levels (all relative to renderer.toneMappingExposure = 1.0 in game.js)
+   ============================================================ */
+const SODIUM = 0xffa155;            // high-pressure sodium, ~2000 K
+const ENV_INTENSITY = 2.6;          // sky dome as indirect light
+const SKY_BG_INTENSITY = 1.0;       // sky dome as seen by the camera
+const FOG_HORIZON_MATCH = 1.0;      // fog colour = horizon radiance × this
+const HEMI_INTENSITY = 0.35;
+const BOUNCE_INTENSITY = 0.06;      // per light, three of them
+const MOON_INTENSITY = 0.28;
+const LAMP_INTENSITY = 900;         // candela-scale; pool centre irradiance ≈ I / h² ≈ 11
+const FAR_FILL_INTENSITY = 7;
+
+/* Albedo correction per batch bucket.
+   The vertex colours were authored against the old rig, where the concrete texture itself was ~0.017 linear
+   and every lit surface was multiplied down to near black (effective wall albedo ~0.0006, asphalt ~0.007).
+   Real values: weathered concrete 0.2–0.3, painted steel 0.1–0.3, container paint 0.08–0.2.
+   The concrete map is now a near-white detail map (mean ~0.7) and the vertex colour carries the albedo,
+   lifted here in linear space by one documented factor per bucket instead of editing ~80 literals.
+   This is a material property, not exposure: lights and exposure are unchanged by it. */
+const ALBEDO_LIFT = { concrete: 3.2, metal: 1.8, paint: 1.5 };
+const ALBEDO_MAX = 0.6;
+
 class Batcher {
   constructor() {
     this.b = new Map();
@@ -38,10 +61,12 @@ class Batcher {
   }
   _b(name) {
     let o = this.b.get(name);
-    if (!o) this.b.set(name, (o = { pos: [], nor: [], col: [], uv: [] }));
+    if (!o) this.b.set(name, (o = { pos: [], nor: [], col: [], uv: [], sky: [] }));
     return o;
   }
-  add(name, geo, matrix, color) {
+  /* sky: baked sky visibility 0..1 for this piece (1 = open sky, ~0.2 = inside a building).
+     It scales only indirect light (hemisphere + environment), see patchSkyVisibility(). */
+  add(name, geo, matrix, color, sky = 1) {
     const src = nonIndexed(geo);
     const p = src.attributes.position.array;
     const n = src.attributes.normal.array;
@@ -50,12 +75,17 @@ class Batcher {
     /* reused temporaries: add() used to allocate Matrix3 + 2×Vector3 + Color on every call */
     const nm = this._nm.getNormalMatrix(matrix);
     const v = this._v, vn = this._vn, c = this._c.set(color);
+    const lift = ALBEDO_LIFT[name] || 1;
+    if (lift !== 1) {
+      c.r = Math.min(ALBEDO_MAX, c.r * lift); c.g = Math.min(ALBEDO_MAX, c.g * lift); c.b = Math.min(ALBEDO_MAX, c.b * lift);
+    }
     for (let i = 0; i < p.length; i += 3) {
       v.set(p[i], p[i + 1], p[i + 2]).applyMatrix4(matrix);
       vn.set(n[i], n[i + 1], n[i + 2]).applyMatrix3(nm).normalize();
       o.pos.push(v.x, v.y, v.z);
       o.nor.push(vn.x, vn.y, vn.z);
       o.col.push(c.r, c.g, c.b);
+      o.sky.push(sky);
     }
     /* not o.uv.push(...u): spreading a long u blows the stack, and per-element push is faster anyway */
     if (u) {
@@ -73,6 +103,7 @@ class Batcher {
       g.setAttribute('normal', new THREE.Float32BufferAttribute(o.nor, 3));
       g.setAttribute('color', new THREE.Float32BufferAttribute(o.col, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute(o.uv, 2));
+      g.setAttribute('skyVis', new THREE.Float32BufferAttribute(o.sky, 1));
       g.computeBoundingSphere();
       const m = new THREE.Mesh(g, materials[name]);
       m.castShadow = castShadow;
@@ -83,6 +114,22 @@ class Batcher {
     }
     return out;
   }
+}
+
+/* Baked sky visibility: scales indirect light (hemisphere + environment) by the per-vertex skyVis attribute,
+   leaving direct lights untouched. Without it a warehouse interior receives the full open-sky ambient
+   through its roof. Inserted right after three's lights_fragment_maps chunk, where `irradiance`,
+   `iblIrradiance` and `radiance` hold exactly the indirect terms. */
+function patchSkyVisibility(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float skyVis;\nvarying float vSkyVis;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkyVis = skyVis;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vSkyVis;')
+      .replace('#include <lights_fragment_maps>',
+        '#include <lights_fragment_maps>\nirradiance *= vSkyVis;\n#if defined( RE_IndirectSpecular )\niblIrradiance *= vSkyVis;\nradiance *= vSkyVis;\n#endif');
+  };
 }
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -100,6 +147,7 @@ class Level {
     this.rng = makeRng(20260924);
     this.signs = [];
     this.covers = [];
+    this.sky = 1;                 // sky visibility stamped on everything added until changed (interiors set it low)
     this._m = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
     this._v = new THREE.Vector3();
@@ -114,7 +162,7 @@ class Level {
       this._v.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
       this._s.set(Math.abs(x1 - x0) || 0.02, Math.abs(y1 - y0) || 0.02, Math.abs(z1 - z0) || 0.02);
       this._m.compose(this._v, new THREE.Quaternion(), this._s);
-      this.batch.add(bucket, UNIT_BOX, this._m, color);
+      this.batch.add(bucket, UNIT_BOX, this._m, color, this.sky);
     }
     if (o.collide !== false) {
       this.grid.add({
@@ -135,7 +183,7 @@ class Level {
     this._v.set(cx, cy, cz);
     this._s.set(sx, sy, sz);
     this._m.compose(this._v, this._q, this._s);
-    this.batch.add(bucket, UNIT_BOX, this._m, color);
+    this.batch.add(bucket, UNIT_BOX, this._m, color, this.sky);
     if (o.collide !== false) {
       const c = Math.abs(Math.cos(ry)), s = Math.abs(Math.sin(ry));
       const ex = (sx * c + sz * s) / 2;
@@ -157,7 +205,7 @@ class Level {
     this._v.set(cx, cy, cz);
     this._s.set(r * 2, h, r * 2);
     this._m.compose(this._v, this._q, this._s);
-    this.batch.add(bucket, o.lowPoly ? UNIT_CYL_LO : UNIT_CYL, this._m, color);
+    this.batch.add(bucket, o.lowPoly ? UNIT_CYL_LO : UNIT_CYL, this._m, color, this.sky);
     if (o.collide) {
       this.grid.add({
         min: { x: cx - r, y: cy - h / 2, z: cz - r },
@@ -226,31 +274,50 @@ class Level {
 }
 
 /* ============================================================
-   Environment map (source of wet reflections)
+   Sky dome: one vertical gradient shared by the environment map (lighting) and the background (what you see)
+   ------------------------------------------------------------
+   Physical picture: a low sea-fog layer lit from below by the port's sodium lamps.
+     · the fog scatters that light most strongly near the horizon → a dirty orange band, the brightest part of the sky
+     · towards the zenith you look through less lit fog → it falls off to a cold, dim blue-grey (never black)
+     · below the horizon (seen by surfaces, not the camera) is wet ground reflecting lamp pools → warm and dark
+   Equirectangular: t = 0 zenith, 0.5 horizon, 1 nadir. Values are sRGB, decoded to linear by the texture colour space.
+   ============================================================ */
+export const SKY_STOPS = [
+  [0.00, '#0e1621'],
+  [0.22, '#141d29'],
+  [0.36, '#20252f'],
+  [0.44, '#352f2e'],
+  [0.485, '#4f3f33'],
+  [0.50, '#584536'],
+  [0.515, '#47382d'],
+  [0.56, '#2a231d'],
+  [1.00, '#14120f'],
+];
+/* the sky colour right at the horizon; fog must converge to this so distant geometry dissolves into the sky */
+export const SKY_HORIZON = '#584536';
+
+function paintSkyGradient(g, w, h) {
+  const grd = g.createLinearGradient(0, 0, 0, h);
+  for (const [t, c] of SKY_STOPS) grd.addColorStop(t, c);
+  g.fillStyle = grd; g.fillRect(0, 0, w, h);
+}
+
+/* ============================================================
+   Environment map (indirect light + wet reflections)
    ============================================================ */
 function buildEnvironment(renderer) {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 256;
   const g = c.getContext('2d');
-  const grd = g.createLinearGradient(0, 0, 0, 256);
-  grd.addColorStop(0.00, '#0a1622');
-  grd.addColorStop(0.42, '#12283a');
-  grd.addColorStop(0.52, '#1b3b4e');
-  grd.addColorStop(0.68, '#0d1a22');
-  grd.addColorStop(1.00, '#05080b');
-  g.fillStyle = grd; g.fillRect(0, 0, 512, 256);
-  // horizon light band + light points
+  paintSkyGradient(g, 512, 256);
+  /* lamp heads and lit windows around the horizon: these give wet surfaces their warm specular glints */
   for (let i = 0; i < 26; i++) {
-    const x = TX.rand() * 512, y = 118 + TX.rand() * 22;
-    const r = 8 + TX.rand() * 22;
+    const x = TX.rand() * 512, y = 120 + TX.rand() * 10;
+    const r = 4 + TX.rand() * 10;
     const rg = g.createRadialGradient(x, y, 0, x, y, r);
-    rg.addColorStop(0, 'rgba(255,196,128,.85)');
-    rg.addColorStop(1, 'rgba(255,180,110,0)');
+    rg.addColorStop(0, 'rgba(255,190,120,.9)');
+    rg.addColorStop(1, 'rgba(255,170,100,0)');
     g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
-  }
-  for (let i = 0; i < 40; i++) {
-    g.fillStyle = 'rgba(255,255,255,.5)';
-    g.fillRect(TX.rand() * 512, TX.rand() * 40, 1.4, 1.4);
   }
   const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
@@ -265,40 +332,23 @@ function buildEnvironment(renderer) {
   return rt;
 }
 
-/* Night sky gradient (equirectangular background) */
+/* Night sky (equirectangular background): the same gradient plus slow cloud structure in the fog */
 function buildSkyTexture() {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 512;
   const g = c.getContext('2d');
-  const grd = g.createLinearGradient(0, 0, 0, 512);
-  grd.addColorStop(0.00, '#04070b');
-  grd.addColorStop(0.28, '#071019');
-  grd.addColorStop(0.44, '#091420');
-  grd.addColorStop(0.50, '#0f2130');
-  grd.addColorStop(0.53, '#152b36');
-  grd.addColorStop(0.58, '#0a131b');
-  grd.addColorStop(0.72, '#070c12');
-  grd.addColorStop(1.00, '#04070a');
-  g.fillStyle = grd; g.fillRect(0, 0, 1024, 512);
-  // cloud layer
+  paintSkyGradient(g, 1024, 512);
+  // cloud / fog banks: slightly lighter and warmer lower down, where they catch the port's light
   for (let i = 0; i < 90; i++) {
-    const x = TX.rand() * 1024, y = 120 + TX.rand() * 180;
-    const rx = 120 + TX.rand() * 260, ry = 22 + TX.rand() * 46;
+    const x = TX.rand() * 1024, y = 90 + TX.rand() * 160;
+    const rx = 120 + TX.rand() * 260, ry = 18 + TX.rand() * 40;
+    const warm = y / 250;
     const rg = g.createRadialGradient(x, y, 0, x, y, rx);
-    rg.addColorStop(0, `rgba(28,48,64,${0.07 + TX.rand() * 0.11})`);
-    rg.addColorStop(1, 'rgba(20,36,50,0)');
+    rg.addColorStop(0, `rgba(${Math.round(40 + 40 * warm)},${Math.round(44 + 22 * warm)},${Math.round(54 + 4 * warm)},${0.05 + TX.rand() * 0.08})`);
+    rg.addColorStop(1, 'rgba(30,34,42,0)');
     g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y);
     g.fillStyle = rg; g.beginPath(); g.arc(x, y, rx, 0, 6.3); g.fill();
     g.restore();
-  }
-  // port light pollution
-  for (let i = 0; i < 40; i++) {
-    const x = TX.rand() * 1024, y = 268 + TX.rand() * 20;
-    const r = 40 + TX.rand() * 120;
-    const rg = g.createRadialGradient(x, y, 0, x, y, r);
-    rg.addColorStop(0, 'rgba(255,170,100,.085)');
-    rg.addColorStop(1, 'rgba(255,150,80,0)');
-    g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
   }
   const t = new THREE.CanvasTexture(c);
   t.mapping = THREE.EquirectangularReflectionMapping;
@@ -329,43 +379,58 @@ export function buildWorld(scene, renderer) {
   const L = new Level(scene, grid);
   const rng = L.rng;
 
-  scene.fog = new THREE.FogExp2(0x0a141d, 0.0158);
+  /* Fog density is gameplay (briefing: visibility ~46 m) and stays as it was. Its colour now converges to the
+     horizon of the sky dome, so geometry fades into the sky instead of into a darker blue than the sky. */
+  scene.fog = new THREE.FogExp2(new THREE.Color(SKY_HORIZON).multiplyScalar(SKY_BG_INTENSITY * FOG_HORIZON_MATCH), 0.0158);
   /* Background and environment textures aren't in the scene graph, so scene.traverse misses them;
      hold explicit references and free them in disposeMission. */
   const skyTex = buildSkyTexture();
   scene.background = skyTex;
   const envRT = buildEnvironment(renderer);
   scene.environment = envRT.texture;
+  /* Note: for a MeshStandardMaterial without its own envMap, three r180 takes envMapIntensity from
+     scene.environmentIntensity (WebGLRenderer.setProgram). Per-material envMapIntensity values on such
+     materials were never applied, so this global is the one real knob for image-based light. */
+  scene.environmentIntensity = ENV_INTENSITY;
+  scene.backgroundIntensity = SKY_BG_INTENSITY;
 
   /* ---------------- Materials ---------------- */
   const asphalt = TX.asphaltTexture();
   asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
+  /* Physics pass: asphalt, water and paint are dielectrics (metalness 0, F0 ≈ 0.04 / 0.02).
+     Their specular now comes from Fresnel on a smooth-ish surface reflecting the sky dome and the lamps —
+     weak head-on, strong at grazing angles, which is exactly how wet ground behaves — instead of from
+     pretending to be metal, which tinted reflections by albedo and gave the plastic look.
+     "metal" is mostly painted steel (racking, roofs, crane): paint over steel is a dielectric too;
+     a small metalness keeps a hint of the bare edges and galvanising. */
   const mats = {
     asphalt: new THREE.MeshStandardMaterial({
-      map: asphalt, color: 0xffffff, roughness: 0.34, metalness: 0.62, envMapIntensity: 0.85,
+      map: asphalt, color: 0xffffff, roughness: 0.5, metalness: 0,
     }),
     water: new THREE.MeshStandardMaterial({
-      color: 0x03070b, roughness: 0.26, metalness: 0.95, envMapIntensity: 0.5,
+      color: 0x0a0f12, roughness: 0.12, metalness: 0,
     }),
     concrete: new THREE.MeshStandardMaterial({
-      map: TX.concreteTexture(), vertexColors: true, roughness: 0.78, metalness: 0.08, envMapIntensity: 0.55,
+      map: TX.concreteTexture(), vertexColors: true, roughness: 0.85, metalness: 0,
     }),
     metal: new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.36, metalness: 0.88, envMapIntensity: 0.9,
+      vertexColors: true, roughness: 0.55, metalness: 0.2,
     }),
     paint: new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.55, metalness: 0.3, envMapIntensity: 0.7,
+      vertexColors: true, roughness: 0.6, metalness: 0,
     }),
     glass: new THREE.MeshStandardMaterial({
       color: 0x9fd4e2, transparent: true, opacity: 0.16, roughness: 0.06,
       metalness: 0.35, side: THREE.DoubleSide, envMapIntensity: 1.6, depthWrite: false,
     }),
     lamp: new THREE.MeshStandardMaterial({
-      color: 0xffe3b8, emissive: 0xffb46b, emissiveIntensity: 1.35,
+      /* the lamp head is the light source: it must out-shine everything it lights */
+      color: 0xffe3b8, emissive: 0xffb46b, emissiveIntensity: 6,
       roughness: 0.35, metalness: 0.1,
     }),
   };
   mats.concrete.map.wrapS = mats.concrete.map.wrapT = THREE.RepeatWrapping;
+  for (const k of ['concrete', 'metal', 'paint']) patchSkyVisibility(mats[k]);
 
   /* ---------------- Ground / water ---------------- */
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), mats.asphalt);
@@ -435,10 +500,14 @@ export function buildWorld(scene, renderer) {
   addFence(72, -66, 72, 50);
 
   /* ---------------- Bay 3 ---------------- */
+  /* interiors see almost no open sky: the roof and walls occlude ~80% of the hemisphere */
+  const SKY_INTERIOR = 0.22;
   const whA = { x0: -64, x1: -20, z0: -26, z1: 4, h: 9.5 };
   const wallC = 0x333a45;
   // floor
+  L.sky = SKY_INTERIOR;
   L.box(whA.x0, whA.x1, 0.0, 0.14, whA.z0, whA.z1, { color: 0x2c333c, bucket: 'concrete', collide: false });
+  L.sky = 1;
   // four walls: west solid, east with two cargo doors, south with an entrance
   L.wallX(whA.x0 + 0.3, 0.6, whA.z0, whA.z1, 0, whA.h, [], wallC);
   L.wallX(whA.x1 - 0.3, 0.6, whA.z0, whA.z1, 0, whA.h, [
@@ -454,6 +523,7 @@ export function buildWorld(scene, renderer) {
     { color: 0x252b33, bucket: 'metal' });
 
   // interior columns
+  L.sky = SKY_INTERIOR;
   for (let z = whA.z0 + 5; z < whA.z1 - 2; z += 6) {
     L.box(-42.5, -41.5, 0, whA.h - 0.6, z - 0.5, z + 0.5, { color: 0x3b434e, bucket: 'concrete' });
   }
@@ -481,13 +551,16 @@ export function buildWorld(scene, renderer) {
   L.box(-24.4, -23.0, 0, 1.9, -25.0, -23.4, { color: 0x4b5560, bucket: 'metal' });
   L.box(-31.0, -28.4, 1.1, 2.0, -25.2, -25.0, { color: 0xd8dde2, bucket: 'paint', collide: false });
   L.cyl(-25.6, 0.3, -19.4, 0.32, 0.6, { color: 0x2f363d, collide: true, lowPoly: true });
+  L.sky = 1;
   // signage
   L.sign('VOLKERSTADT LOGISTIK', 'BAY 3 · GENERAL CARGO', -20.1, 7.2, -11, 12, 3, Math.PI / 2, { code: 'MPA-03' });
   L.sign('BAY 3', 'ENTRANCE B · NO ADMITTANCE', -20.2, 4.6, 1.6, 6, 1.5, Math.PI / 2, { accent: '#e8c247', code: 'ENT-3B' });
 
   /* ---------------- Cold store KÜHLHAUS ---------------- */
   const whB = { x0: 18, x1: 62, z0: 6, z1: 40, h: 8 };
+  L.sky = SKY_INTERIOR;
   L.box(whB.x0, whB.x1, 0, 0.14, whB.z0, whB.z1, { color: 0x2a3138, bucket: 'concrete', collide: false });
+  L.sky = 1;
   const whBC = 0x39424c;
   L.wallX(whB.x0 + 0.3, 0.6, whB.z0, whB.z1, 0, whB.h,
     [{ from: 18.5, to: 23.5, sill: 0, head: 3.2, glass: false }], whBC);
@@ -497,16 +570,20 @@ export function buildWorld(scene, renderer) {
   L.wallZ(whB.z1 - 0.3, 0.6, whB.x0, whB.x1, 0, whB.h, [], whBC);
   L.box(whB.x0 - 0.4, whB.x1 + 0.4, whB.h, whB.h + 0.6, whB.z0 - 0.4, whB.z1 + 0.4, { color: 0x20262d, bucket: 'metal' });
   // cold store racking and pallets
+  L.sky = SKY_INTERIOR;
   for (let i = 0; i < 4; i++) {
     const z = 12 + i * 7;
     L.box(30, 44, 0, 4.2, z, z + 1.8, { color: 0x515a63, bucket: 'metal' });
     L.box(46, 58, 0, 4.2, z, z + 1.8, { color: 0x515a63, bucket: 'metal' });
   }
+  L.sky = 1;
   L.sign('EISWERK KÜHLHAUS', 'COLD STORE · −24 °C', 17.7, 6.2, 12, 11, 2.8, -Math.PI / 2, { code: 'CS-2', accent: '#7fd6ff' });
 
   /* ---------------- Dispatch building ---------------- */
   const dp = { x0: 22, x1: 54, z0: -42, z1: -20, h: 6.6 };
+  L.sky = SKY_INTERIOR;
   L.box(dp.x0, dp.x1, 0, 0.16, dp.z0, dp.z1, { color: 0x2f363e, bucket: 'concrete', collide: false });
+  L.sky = 1;
   const dpC = 0x3c4550;
   // west facade: faces the yard, windows for observation from outside
   L.wallX(dp.x0 + 0.25, 0.5, dp.z0, dp.z1, 0, dp.h, [
@@ -528,6 +605,7 @@ export function buildWorld(scene, renderer) {
   ], dpC);
   L.box(dp.x0 - 0.35, dp.x1 + 0.35, dp.h, dp.h + 0.45, dp.z0 - 0.35, dp.z1 + 0.35, { color: 0x272d35, bucket: 'metal' });
   // interior partition (west: admin / east: ops room)
+  L.sky = SKY_INTERIOR;
   L.wallX(38.7, 0.6, dp.z0 + 0.5, dp.z1 - 0.5, 0, dp.h - 0.6,
     [{ from: -31.4, to: -28.6, sill: 0, head: 2.4, glass: false }], 0x363f49);
   // ops room interior
@@ -541,6 +619,7 @@ export function buildWorld(scene, renderer) {
   L.box(24, 30, 0, 0.8, -38, -35.6, { color: 0x5a4a37, bucket: 'paint' });
   L.box(24, 30, 0, 0.8, -30, -27.6, { color: 0x5a4a37, bucket: 'paint' });
   L.box(31, 33, 0, 2.0, -41.2, -39.8, { color: 0x4b5560, bucket: 'metal' });
+  L.sky = 1;
   L.sign('MERIDIAN PORT AUTHORITY', 'PORT DISPATCH · OPS', 26.5, 4.0, -19.6, 10, 2.6, 0, { code: 'OP-D1' });
   L.sign('TALOS SICHERHEIT', 'NIGHT WATCH · 24H', 55.6, 3.2, -30, 7, 2, Math.PI / 2, { code: 'SEC-07', accent: '#e8c247' });
 
@@ -723,8 +802,10 @@ export function buildWorld(scene, renderer) {
 
   /* ---------------- Puddles ---------------- */
   const puddleMat = new THREE.MeshStandardMaterial({
-    color: 0x070d13, roughness: 0.03, metalness: 1.0, transparent: true, opacity: 0.9,
-    envMapIntensity: 2.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    /* standing water: dielectric (F0 ≈ 0.02), mirror-smooth; head-on you see the dark asphalt under it,
+       at grazing angles Fresnel turns it into a mirror of the sky band and the lamps */
+    color: 0x14171a, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.9,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     /* winding of the merged triangles depends on each puddle's orientation, so single-sided rendering randomly drops faces;
        double-sided costs almost nothing on flat sheets. */
     side: THREE.DoubleSide,
@@ -776,10 +857,34 @@ export function buildWorld(scene, renderer) {
     scene.add(m);
   }
 
-  /* ---------------- Lights ---------------- */
-  const hemi = new THREE.HemisphereLight(0x35506a, 0x0a0e13, 0.58);
+  /* ---------------- Lights ----------------
+     Exposure (renderer.toneMappingExposure in game.js) is the one global; everything below is set relative to it
+     and to each other, in layers:
+       1. sky   — the environment map (SKY_STOPS) is the main ambient: cold zenith, sodium-orange horizon band.
+                  The hemisphere light repeats that split for surfaces facing straight up/down.
+       2. bounce — wet ground throws pool light back up onto container undersides and flanks:
+                  three weak, wide, upward directionals tinted to the sodium colour, a few percent of the key.
+       3. key   — sodium lamps as wide-penumbra spotlights pointing down (a lamp head emits into the lower
+                  hemisphere only), inverse-square falloff with no distance cutoff: the hard 36 m window of the
+                  old point lights is what drew the elliptical rims.
+       4. far fill — a few cheap, low-decay points high above the yard: sodium light carried tens of metres
+                  by the fog and the wet asphalt.
+       5. moon  — a dim, cold, fog-diffused sky key; it keeps the only shadow map (grounding / contact shadows). */
+  const hemi = new THREE.HemisphereLight(0x6f86a6, 0x8a5a33, HEMI_INTENSITY);
   scene.add(hemi);
-  const moon = new THREE.DirectionalLight(0x9dc3e6, 0.54);
+
+  const bounce = [];
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.4;
+    const d = new THREE.DirectionalLight(SODIUM, BOUNCE_INTENSITY);
+    /* positioned below the ground looking up: lights faces whose normals point down or sideways */
+    d.position.set(Math.cos(a), -0.7, Math.sin(a));
+    d.target.position.set(0, 0, 0);
+    scene.add(d); scene.add(d.target);
+    bounce.push(d);
+  }
+
+  const moon = new THREE.DirectionalLight(0x9db6d4, MOON_INTENSITY);
   moon.position.set(38, 62, -26);
   moon.castShadow = true;
   moon.shadow.mapSize.set(2048, 2048);
@@ -791,17 +896,28 @@ export function buildWorld(scene, renderer) {
   moon.shadow.camera.bottom = -52;
   moon.shadow.bias = -0.0009;
   moon.shadow.normalBias = 0.03;
+  moon.shadow.radius = 3;
   scene.add(moon);
   scene.add(moon.target);
 
   const lampLights = [];
   [0, 2, 3, 5, 6, 8].forEach((idx) => {
     const [x, z] = lampSpots[idx];
-    const pl = new THREE.PointLight(0xffb877, 74, 36, 1.9);
-    pl.position.set(x, 8.7, z);
-    scene.add(pl);
-    lampLights.push(pl);
+    /* angle 1.25 rad (~72° half-angle) with penumbra 0.9: the beam edge is a long ramp, not a rim;
+       a 0.9 m lamp head is an area source, which a wide penumbra approximates */
+    const sl = new THREE.SpotLight(SODIUM, LAMP_INTENSITY, 0, 1.25, 0.9, 2);
+    sl.position.set(x, 8.85, z);
+    sl.target.position.set(x, 0, z);
+    scene.add(sl); scene.add(sl.target);
+    lampLights.push(sl);
   });
+  const farFill = [];
+  for (const [x, z] of [[-6, -44], [6, -14], [6, 20]]) {
+    const pl = new THREE.PointLight(SODIUM, FAR_FILL_INTENSITY, 80, 1.0);
+    pl.position.set(x, 18, z);
+    scene.add(pl);
+    farFill.push(pl);
+  }
   // building interior fill
   const fillA = new THREE.PointLight(0xcfe6ff, 42, 34, 1.9); fillA.position.set(-46, 6.5, -10); scene.add(fillA);
   const fillD = new THREE.PointLight(0xa8dcff, 46, 34, 1.9); fillD.position.set(44, 5.0, -32); scene.add(fillD);
@@ -923,7 +1039,7 @@ export function buildWorld(scene, renderer) {
     grid, level: L, batchMeshes, mats, covers, coverIdx,
     objectives, zones, safeZone, spawns, suspects, civilians, containers,
     skyTex, envRT,                       // not in the scene graph; freed by disposeMission
-    lights: { hemi, moon, lampLights, fills: [fillA, fillB, fillD] },
+    lights: { hemi, moon, lampLights, farFill, bounce, fills: [fillA, fillB, fillD] },
     update,
     bounds: WORLD.bounds,
   };
