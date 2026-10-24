@@ -5,7 +5,7 @@
 > to deal with armed suspects, protect civilians, recover a cargo manifest and secure dispatch evidence.
 > **Observe first. Order second.**
 
-[![Play online](https://img.shields.io/badge/play-GitHub%20Pages-54d6c6?style=flat-square)](https://sun-sh902.github.io/silent-meridian/)
+[![Play online](https://img.shields.io/badge/play-GitHub%20Pages-54d6c6?style=flat-square)](https://sun-sh902.github.io/Silent-Meridian/)
 [![Tests](https://img.shields.io/badge/tests-11%2F11%20pass-54d6c6?style=flat-square)](#self-checks)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-three.js%20only-brightgreen?style=flat-square)](#one-threejs-runtime)
@@ -14,7 +14,7 @@ A pure front-end, offline-capable first-person tactical simulation: **zero runti
 no network requests, and every texture and sound is generated procedurally with canvas / WebAudio at runtime.
 One command runs 11 acceptance suites in real Chrome.
 
-[Play online](https://sun-sh902.github.io/silent-meridian/) ·
+[Play online](https://sun-sh902.github.io/Silent-Meridian/) ·
 [Run locally](#running-it-important) ·
 [Controls](#controls) ·
 [Self-checks](#self-checks)

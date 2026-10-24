@@ -2,7 +2,7 @@
    check-dist.mjs — dist/ staleness check (no browser needed, takes seconds)
    ------------------------------------------------------------
    Why:
-     dist/ is gitignored, yet under file:// index.html loads exactly
+     dist/ is committed with the repo, and under file:// index.html loads exactly
      dist/silent-meridian.js. If src/ changes and the rebuild is forgotten, double-click players
      keep running the old bundle, which carries the same version as a fresh one — invisible.
      It happened: P0-4 (deploy didn't reset paused) was fixed but not in dist,

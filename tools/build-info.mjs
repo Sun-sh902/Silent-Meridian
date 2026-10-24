@@ -2,7 +2,7 @@
    build-info.mjs — build input manifest and content hash (shared by build.mjs and check-dist.mjs)
    ------------------------------------------------------------
    Why it exists:
-     dist/ is not under version control, and index.html's ?v= only changes when V does.
+     dist/ is committed with the repo, and index.html's ?v= only changes when V does.
      If src/ changes but node build.mjs is forgotten, the file:// path keeps running the old bundle,
      and old and fresh bundles carry the same version — indistinguishable from outside.
      (It happened: P0-4 was fixed, but dist didn't have the fix,

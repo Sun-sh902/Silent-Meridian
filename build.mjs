@@ -47,7 +47,7 @@ execFileSync(esbuild, [
 ], { stdio: 'inherit' });
 
 // ---- stamp the output with "version + content hash" ----
-// Background: dist/ is not under version control, and index.html's ?v= only changes when V does.
+// Background: dist/ is committed with the repo, and index.html's ?v= only changes when V does.
 // If src/ changes without a rebuild, the file:// path silently keeps running the old bundle
 // (it happened: P0-4 was fixed but not in dist, so double-click players still hit it).
 // The stamp is written into the bundle itself, for tools/check-dist.mjs's staleness check.
