@@ -72,6 +72,13 @@ const FAR_FILL_INTENSITY = 7;
 const SHAFT_INTENSITY = 0.22;      // additive radiance at the brightest part of a beam
 const MOTE_INTENSITY = 2.5;
 const GROUND_SIZE = 400;
+/* interiors see almost no open sky: the roof and walls occlude ~80% of the hemisphere */
+const SKY_INTERIOR = 0.22;
+const INTERIORS = [
+  { x0: -64, x1: -20, z0: -26, z1: 4 },      // Bay 3
+  { x0: 18, x1: 62, z0: 6, z1: 40 },         // cold store
+  { x0: 22, x1: 54, z0: -42, z1: -20 },      // dispatch
+];
 
 /* Albedo correction per batch bucket.
    The vertex colours were authored against the old rig, where the concrete texture itself was ~0.017 linear
@@ -644,8 +651,6 @@ export function buildWorld(scene, renderer) {
   addFence(72, -66, 72, 50);
 
   /* ---------------- Bay 3 ---------------- */
-  /* interiors see almost no open sky: the roof and walls occlude ~80% of the hemisphere */
-  const SKY_INTERIOR = 0.22;
   const whA = { x0: -64, x1: -20, z0: -26, z1: 4, h: 9.5 };
   const wallC = 0x333a45;
   // floor
@@ -1287,6 +1292,11 @@ export function buildWorld(scene, renderer) {
     setPostGlow(on) { for (const sp of glowSprites) sp.visible = !on; },
     /* clock driving shaft noise and mote drift (simulation seconds; stays 0 under prefers-reduced-motion) */
     get atmosphereTime() { return atmo.time.value; },
+    /* sky visibility at a ground position: building interiors see ~22% of the sky (used by the viewmodel) */
+    skyAt(x, z) {
+      for (const b of INTERIORS) if (x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1) return SKY_INTERIOR;
+      return 1;
+    },
     bounds: WORLD.bounds,
   };
 }
