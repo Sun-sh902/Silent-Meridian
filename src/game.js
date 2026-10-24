@@ -16,13 +16,20 @@ import { clamp, dist2D, TAU, losBlocked, makeRng } from './geom.js';
 import { watchResize, canvasDpr } from './canvasfit.js';
 import { feel, telemetry } from './feel.js';
 import { TuningPanel } from './tuning.js';
+import { Post } from './post.js';
 import { TUNING, LINES, DIRECTIONS, ORDER_NAMES, COMMS } from './data.js';
 
 export class Game {
   constructor(canvas) {
     this.canvas = canvas;
+    /* Post-processing (bloom + grade + grain) unless ?nopost. When it's on, grading happens in the shader and the
+       CSS #grade / #vignette overlays are hidden (body.post-on); with ?nopost the old path and overlays are untouched,
+       so the image is identical to before post existed. With post on, multisampling happens on the HDR scene target,
+       so the canvas itself needs no MSAA (it only ever receives one full-screen triangle). */
+    let wantPost = true;
+    try { wantPost = !new URLSearchParams(location.search).has('nopost'); } catch (e) { /* no location: keep default */ }
     this.renderer = new THREE.WebGLRenderer({
-      canvas, antialias: true, powerPreference: 'high-performance', stencil: false,
+      canvas, antialias: !wantPost, powerPreference: 'high-performance', stencil: false,
     });
     this.renderer.setPixelRatio(canvasDpr(2));   // the real DPR is kept current in resize()
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -37,6 +44,8 @@ export class Game {
        separation pushes, aim tracking), so there is almost never a frame where every caster is static.
        Zero gain, while every future caster would have to remember to set the flag — rejected.
        Only the texel snapping in world.update below is kept (that one is a real quality fix). */
+    this.post = wantPost ? new Post(this.renderer) : null;
+    document.body.classList.toggle('post-on', !!this.post);
     this.camera = new THREE.PerspectiveCamera(72, 1, 0.05, 420);
     this.audio = new Audio();
     this.state = 'menu';
@@ -82,6 +91,7 @@ export class Game {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     if (this.viewmodel) this.viewmodel.resize(w, h);
+    if (this.post) this.post.setSize();
     this.viewport = { w, h, dpr: canvasDpr(2) };
     this.resizeCount++;
   }
@@ -213,6 +223,7 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.world = buildWorld(this.scene, this.renderer);
+    this.world.setPostGlow(!!this.post);
     this.nav = new NavGrid(this.world.grid, { x0: -74, x1: 74, z0: -66, z1: 52 }, 1.5, 0.62);
     this.effects = new Effects(this.scene);
     this.projectiles = [];
@@ -1232,6 +1243,8 @@ export class Game {
   /* Render only, no simulation step. The normal loop calls it once per frame;
      under ?test=1 rAF doesn't render, so external tools (tools/shots-fixed.mjs) call it after advance(). */
   renderFrame() {
+    const post = this.post;
+    if (post) post.begin();                 // scene + viewmodel go into the HDR target
     this.renderer.autoClear = true;
     this.renderer.render(this.scene, this.camera);
     if (this.viewmodel) {
@@ -1239,6 +1252,7 @@ export class Game {
       this.viewmodel.render(this.renderer);
       this.renderer.autoClear = true;
     }
+    if (post) post.end(this.missionTime || 0);
   }
 
   updateWeaponLight() {

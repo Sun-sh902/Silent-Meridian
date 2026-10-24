@@ -868,6 +868,9 @@ export function buildWorld(scene, renderer) {
     [-17.5, 2, 0], [16, 2, 0], [0, 22, 0], [-34, 12, 0],
     [46, -46, 0], [-30, 46, 0], [22, 44, 0],
   ];
+  /* The additive glow sprites fake lamp glow for the no-post path. With post on, bloom produces the glow from
+     the lamp heads themselves and the sprites would stack a second, hard-edged disc on top (see setPostGlow). */
+  const glowSprites = [];
   const glowTex = glowTexture();
   const lampGlowMat = new THREE.SpriteMaterial({
     map: glowTex, color: 0xffc07a, transparent: true, blending: THREE.AdditiveBlending,
@@ -883,6 +886,7 @@ export function buildWorld(scene, renderer) {
     sp.position.set(x, 9.0, z);
     sp.scale.set(7, 7, 1);
     scene.add(sp);
+    glowSprites.push(sp);
   });
 
   /* ---------------- Wetness ----------------
@@ -1118,6 +1122,7 @@ export function buildWorld(scene, renderer) {
     skyTex, envRT,                       // not in the scene graph; freed by disposeMission
     lights: { hemi, moon, lampLights, farFill, bounce, fills: [fillA, fillB, fillD] },
     update,
+    setPostGlow(on) { for (const sp of glowSprites) sp.visible = !on; },
     bounds: WORLD.bounds,
   };
 }

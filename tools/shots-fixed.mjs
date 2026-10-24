@@ -4,7 +4,7 @@
    Usage:
      node tools/shots-fixed.mjs [--out /tmp/shots] [--tag now] [--repeat 1]
                                 [--poses yard-center,dock-edge] [--query "&nopost"]
-                                [--hud] [--port 8233] [--root <another worktree>] [--pose name,x,z,yaw,pitch]
+                                [--hud] [--port 8233] [--root <another worktree>] [--pose name,x,z,yaw,pitch] [--reduced-motion]
      node tools/shots-fixed.mjs --pair /tmp/shots/before /tmp/shots/after [--out /tmp/shots/pairs]
 
    Method:
@@ -77,6 +77,7 @@ async function statsOf(page, png) {
 
 async function shootPose(pose, query, withHud) {
   const page = await suite.newPage();
+  if (REDUCED) await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
   await page.evaluateOnNewDocument(() => {
     let seed = 0x2f6e2b1;
     Math.random = () => {
@@ -167,6 +168,7 @@ const REPEAT = Math.max(1, Number(argOf('--repeat', '1')));
 const QUERY = argOf('--query', '');
 const WANT = argOf('--poses', '');
 const WITH_HUD = argv.includes('--hud');
+const REDUCED = argv.includes('--reduced-motion');   // emulate prefers-reduced-motion: grain and aberration must switch off
 let poses = WANT ? POSES.filter((p) => WANT.split(',').includes(p.name)) : POSES;
 /* --pose name,x,z,yaw,pitch : an ad-hoc pose instead of the named set (for spot checks, not for the report) */
 if (argOf('--pose', '')) {
