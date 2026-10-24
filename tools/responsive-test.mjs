@@ -156,10 +156,16 @@ await wait(2600);
     if (!g.post) return { post: false };
     const u = g.post.composite.uniforms;
     g.renderFrame();
-    return { post: true, grain: u.grain.value, aberration: u.aberration.value, cssVeils: getComputedStyle(document.getElementById('grade')).display };
+    return {
+      post: true, grain: u.grain.value, aberration: u.aberration.value,
+      cssVeils: getComputedStyle(document.getElementById('grade')).display,
+      atmosphereTime: g.world.atmosphereTime, missionTime: +g.missionTime.toFixed(2),
+    };
   });
   suite.check('reduced motion: post grain and aberration off, CSS veils replaced by the shader grade',
     rm.post && rm.grain === 0 && rm.aberration === 0 && rm.cssVeils === 'none', JSON.stringify(rm));
+  suite.check('reduced motion: light-shaft noise and mote drift frozen while the mission clock runs',
+    rm.atmosphereTime === 0 && rm.missionTime > 0, JSON.stringify(rm));
 }
 
 console.log('\n===== A. Window width sweep (in-game HUD) =====');

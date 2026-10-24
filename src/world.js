@@ -28,6 +28,36 @@ function nonIndexed(g) {
 }
 
 /* ============================================================
+   Layered fog
+   ------------------------------------------------------------
+   Density stays FogExp2 0.0158 (gameplay: visibility ~46 m). Only the colour changes with distance:
+     · close to the camera the fog is the colder, darker air between you and the next lamp — clean
+     · beyond ~40–55 m it converges to the sky's horizon radiance: lamp light scattered in the fog layer,
+       warm and luminous, so distant geometry dissolves into the sky instead of meeting it at a line
+   fogColor (the uniform) is the far colour; FOG_NEAR_TINT scales it down and cools it near the camera.
+   Patched once, globally, before any material compiles (three resolves #include chunks at compile time).
+   ============================================================ */
+THREE.ShaderChunk.fog_fragment = [
+  '#ifdef USE_FOG',
+  '  #ifdef FOG_EXP2',
+  '    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
+  '  #else',
+  '    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );',
+  '  #endif',
+  '  vec3 fogTint = mix( vec3( 0.42, 0.50, 0.66 ), vec3( 1.0 ), smoothstep( 12.0, 55.0, vFogDepth ) );',
+  '  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor * fogTint, fogFactor );',
+  '#endif',
+].join('\n');
+
+/* time-varying atmosphere (shaft noise, mote drift) freezes under prefers-reduced-motion */
+let REDUCED_MOTION = false;
+try {
+  const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+  REDUCED_MOTION = mq.matches;
+  if (mq.addEventListener) mq.addEventListener('change', (e) => { REDUCED_MOTION = e.matches; });
+} catch (e) { /* no matchMedia: motion stays on */ }
+
+/* ============================================================
    Light levels (all relative to renderer.toneMappingExposure = 1.0 in game.js)
    ============================================================ */
 const SODIUM = 0xffa155;            // high-pressure sodium, ~2000 K
@@ -39,6 +69,8 @@ const BOUNCE_INTENSITY = 0.06;      // per light, three of them
 const MOON_INTENSITY = 0.28;
 const LAMP_INTENSITY = 900;         // candela-scale; pool centre irradiance ≈ I / h² ≈ 11
 const FAR_FILL_INTENSITY = 7;
+const SHAFT_INTENSITY = 0.22;      // additive radiance at the brightest part of a beam
+const MOTE_INTENSITY = 2.5;
 const GROUND_SIZE = 400;
 
 /* Albedo correction per batch bucket.
@@ -387,28 +419,58 @@ function buildEnvironment(renderer) {
   return rt;
 }
 
-/* Night sky (equirectangular background): the same gradient plus slow cloud structure in the fog */
-function buildSkyTexture() {
-  const c = document.createElement('canvas');
-  c.width = 1024; c.height = 512;
-  const g = c.getContext('2d');
-  paintSkyGradient(g, 1024, 512);
-  // cloud / fog banks: slightly lighter and warmer lower down, where they catch the port's light
-  for (let i = 0; i < 90; i++) {
-    const x = TX.rand() * 1024, y = 90 + TX.rand() * 160;
-    const rx = 120 + TX.rand() * 260, ry = 18 + TX.rand() * 40;
-    const warm = y / 250;
-    const rg = g.createRadialGradient(x, y, 0, x, y, rx);
-    rg.addColorStop(0, `rgba(${Math.round(40 + 40 * warm)},${Math.round(44 + 22 * warm)},${Math.round(54 + 4 * warm)},${0.05 + TX.rand() * 0.08})`);
-    rg.addColorStop(1, 'rgba(30,34,42,0)');
-    g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y);
-    g.fillStyle = rg; g.beginPath(); g.arc(x, y, rx, 0, 6.3); g.fill();
-    g.restore();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.mapping = THREE.EquirectangularReflectionMapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+/* Night sky as a shader on a camera-following sphere. Analytic, per pixel, no texture: any magnified sky texture
+   (the original 1024×512 equirect, or a 2048 canvas) showed its texel grid on smooth gradients — visible in every
+   screenshot since the start. The gradient uses the same SKY_STOPS as the environment map, mixed in sRGB like the
+   canvas gradient and then decoded, so lighting, sky and fog agree. Cloud banks are procedural value noise,
+   lighter and warmer lower down where they catch the port's light. */
+function buildSkyMaterial() {
+  const stops = SKY_STOPS.map(([t]) => t);
+  const cols = SKY_STOPS.map(([, c]) => { const k = new THREE.Color(c); return new THREE.Vector3(k.r, k.g, k.b); });
+  // THREE.Color(hex) converts sRGB → linear; go back to sRGB values so the mix happens where the canvas mixes
+  const toS = (x) => (x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055);
+  cols.forEach((v) => v.set(toS(v.x), toS(v.y), toS(v.z)));
+  const N = stops.length;
+  return new THREE.ShaderMaterial({
+    uniforms: { stops: { value: stops }, cols: { value: cols }, intensity: { value: SKY_BG_INTENSITY } },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize( ( modelMatrix * vec4( position, 1.0 ) ).xyz - cameraPosition );
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4( position, 1.0 );
+      }`,
+    fragmentShader: `
+      uniform float stops[ ${N} ]; uniform vec3 cols[ ${N} ]; uniform float intensity;
+      varying vec3 vDir;
+      float h21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
+      float vnoise( vec2 p ) {
+        vec2 i = floor( p ), f = fract( p ); f = f * f * ( 3.0 - 2.0 * f );
+        return mix( mix( h21( i ), h21( i + vec2( 1.0, 0.0 ) ), f.x ), mix( h21( i + vec2( 0.0, 1.0 ) ), h21( i + vec2( 1.0, 1.0 ) ), f.x ), f.y );
+      }
+      float fbm( vec2 p ) { float a = 0.5, v = 0.0; for ( int i = 0; i < 4; i++ ) { v += a * vnoise( p ); p *= 2.03; a *= 0.5; } return v; }
+      vec3 srgbToLinear( vec3 c ) { return mix( c / 12.92, pow( ( c + 0.055 ) / 1.055, vec3( 2.4 ) ), step( 0.04045, c ) ); }
+      void main() {
+        vec3 d = normalize( vDir );
+        float t = acos( clamp( d.y, -1.0, 1.0 ) ) / 3.14159265;     // 0 zenith, 0.5 horizon, 1 nadir
+        vec3 c = cols[ 0 ];
+        for ( int i = 1; i < ${N}; i++ ) {
+          float k = clamp( ( t - stops[ i - 1 ] ) / max( stops[ i ] - stops[ i - 1 ], 1e-4 ), 0.0, 1.0 );
+          c = t >= stops[ i - 1 ] ? mix( cols[ i - 1 ], cols[ i ], k ) : c;
+        }
+        /* fog banks between ~5° and ~50° above the horizon */
+        float elev = d.y;
+        float band = smoothstep( 0.03, 0.12, elev ) * ( 1.0 - smoothstep( 0.35, 0.8, elev ) );
+        vec2 q = vec2( atan( d.z, d.x ) * 2.2, elev * 9.0 );
+        float n = fbm( q * vec2( 1.0, 2.6 ) + vec2( 3.1, 0.0 ) );
+        float cloud = smoothstep( 0.48, 0.78, n ) * band;
+        vec3 warm = mix( vec3( 0.20, 0.20, 0.23 ), vec3( 0.36, 0.30, 0.26 ), 1.0 - smoothstep( 0.05, 0.5, elev ) );
+        c = mix( c, max( c, warm ), cloud * 0.45 );
+        gl_FragColor = vec4( srgbToLinear( c ) * intensity, 1.0 );
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    side: THREE.BackSide, depthWrite: false, fog: false,
+  });
 }
 
 function glowTexture() {
@@ -439,15 +501,19 @@ export function buildWorld(scene, renderer) {
   scene.fog = new THREE.FogExp2(new THREE.Color(SKY_HORIZON).multiplyScalar(SKY_BG_INTENSITY * FOG_HORIZON_MATCH), 0.0158);
   /* Background and environment textures aren't in the scene graph, so scene.traverse misses them;
      hold explicit references and free them in disposeMission. */
-  const skyTex = buildSkyTexture();
-  scene.background = skyTex;
+  const skyTex = null;
+  /* sky sphere following the camera, drawn first, never fogged (its horizon IS the fog's far colour) */
+  const skyDome = new THREE.Mesh(new THREE.SphereGeometry(380, 48, 24), buildSkyMaterial());
+  skyDome.renderOrder = -1000;
+  skyDome.frustumCulled = false;
+  scene.add(skyDome);
+  scene.background = null;
   const envRT = buildEnvironment(renderer);
   scene.environment = envRT.texture;
   /* Note: for a MeshStandardMaterial without its own envMap, three r180 takes envMapIntensity from
      scene.environmentIntensity (WebGLRenderer.setProgram). Per-material envMapIntensity values on such
      materials were never applied, so this global is the one real knob for image-based light. */
   scene.environmentIntensity = ENV_INTENSITY;
-  scene.backgroundIntensity = SKY_BG_INTENSITY;
 
   /* ---------------- Materials ---------------- */
   const asphalt = TX.asphaltSet();
@@ -999,6 +1065,100 @@ export function buildWorld(scene, renderer) {
     scene.add(pl);
     farFill.push(pl);
   }
+  /* ---------------- Atmosphere: light shafts and motes ----------------
+     Sea fog makes the sodium beams visible as soft cones. One merged mesh (one draw call) of narrow cones
+     (the bright core of each beam, ~31° half-angle) from the six lit lamp heads: additive, depth-tested so
+     geometry in front hides them, never writing depth. Brightness falls to zero by 70% of the way down (~4.3 m
+     above the ground, clear of the stacks beside the lamps), so a cone never visibly meets the ground or a box, and fades at its silhouette
+     (rim falloff) so it reads as a volume, not a surface. Slow noise drifting through it is the fog moving. */
+  const atmo = { time: { value: 0 } };
+  {
+    const shaftNoise = TX.fogNoiseTexture();
+    const parts = [];
+    for (const sl of lampLights) {
+      const H = 6.2, R = Math.tan(0.55) * H;
+      const g = new THREE.ConeGeometry(R, H, 28, 1, true);
+      g.translate(sl.position.x, sl.position.y - 0.25 - H / 2, sl.position.z);
+      parts.push(g);
+    }
+    const shaftGeo = mergePlanes(parts);
+    parts.forEach((g) => g.dispose());
+    const shaftMat = new THREE.ShaderMaterial({
+      uniforms: { time: atmo.time, tNoise: { value: shaftNoise }, color: { value: new THREE.Color(SODIUM).multiplyScalar(SHAFT_INTENSITY) } },
+      vertexShader: `
+        varying vec3 vWorld; varying vec3 vNormalW; varying float vH;
+        void main() {
+          vec4 w = modelMatrix * vec4( position, 1.0 );
+          vWorld = w.xyz; vNormalW = normalize( mat3( modelMatrix ) * normal ); vH = 1.0 - uv.y;
+          gl_Position = projectionMatrix * viewMatrix * w;
+        }`,
+      fragmentShader: `
+        uniform float time; uniform sampler2D tNoise; uniform vec3 color;
+        varying vec3 vWorld; varying vec3 vNormalW; varying float vH;
+        void main() {
+          float along = smoothstep( 0.0, 0.05, vH ) * pow( max( 1.0 - vH / 0.7, 0.0 ), 1.4 );
+          vec3 V = normalize( cameraPosition - vWorld );
+          float facing = abs( dot( normalize( vNormalW ), V ) );
+          float rim = pow( facing, 1.3 );
+          float n = texture2D( tNoise, vWorld.xz * 0.11 + vec2( time * 0.013, time * 0.006 ) ).r * 0.6
+                  + texture2D( tNoise, vec2( vWorld.x * 0.05 - time * 0.004, vWorld.y * 0.07 ) ).r * 0.4;
+          gl_FragColor = vec4( color * along * rim * ( 0.45 + 0.9 * n ), 1.0 );
+        }`,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    });
+    const shafts = new THREE.Mesh(shaftGeo, shaftMat);
+    shafts.renderOrder = 10;
+    scene.add(shafts);
+
+    /* Motes: a few airborne droplets/dust around the lit lamps, visible only when you look past them towards the
+       lamp (strong forward scattering), so most of the time nobody sees them at all. */
+    const mrng = makeRng(0x4d07e5);
+    const PER = 26, lampPos = lampLights.map((l) => l.position.clone());
+    const mp = new Float32Array(lampPos.length * PER * 3), lamp = new Float32Array(lampPos.length * PER), ph = new Float32Array(lampPos.length * PER);
+    let k = 0;
+    lampPos.forEach((lp, li) => {
+      for (let i = 0; i < PER; i++, k++) {
+        const a = mrng.next() * Math.PI * 2, r = Math.sqrt(mrng.next()) * 4.5;
+        mp[k * 3] = lp.x + Math.cos(a) * r; mp[k * 3 + 1] = 1.2 + mrng.next() * 6.5; mp[k * 3 + 2] = lp.z + Math.sin(a) * r;
+        lamp[k] = li; ph[k] = mrng.next() * 100;
+      }
+    });
+    const mg = new THREE.BufferGeometry();
+    mg.setAttribute('position', new THREE.BufferAttribute(mp, 3));
+    mg.setAttribute('lampIndex', new THREE.BufferAttribute(lamp, 1));
+    mg.setAttribute('phase', new THREE.BufferAttribute(ph, 1));
+    const moteMat = new THREE.ShaderMaterial({
+      uniforms: { time: atmo.time, lamps: { value: lampPos }, color: { value: new THREE.Color(SODIUM).multiplyScalar(MOTE_INTENSITY) } },
+      vertexShader: `
+        uniform float time; uniform vec3 lamps[ ${lampPos.length} ];
+        attribute float lampIndex; attribute float phase;
+        varying float vBright;
+        void main() {
+          vec3 p = position + vec3( sin( time * 0.07 + phase ), sin( time * 0.05 + phase * 1.7 ) * 0.6, cos( time * 0.06 + phase * 0.6 ) ) * 0.35;
+          vec3 L = lamps[ int( lampIndex ) ];
+          vec3 toLamp = normalize( L - p ), toCam = normalize( cameraPosition - p );
+          float fwd = pow( max( dot( -toCam, toLamp ), 0.0 ), 8.0 );        // forward scatter: only against the light
+          float dl = distance( p, L );
+          vBright = fwd / ( 1.0 + dl * dl * 0.08 );
+          vec4 mv = viewMatrix * vec4( p, 1.0 );
+          gl_PointSize = clamp( 26.0 / -mv.z, 1.0, 4.0 );
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform vec3 color; varying float vBright;
+        void main() {
+          vec2 c = gl_PointCoord - 0.5;
+          float a = smoothstep( 0.5, 0.0, length( c ) );
+          gl_FragColor = vec4( color * vBright * a, 1.0 );
+        }`,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    });
+    const motes = new THREE.Points(mg, moteMat);
+    motes.frustumCulled = false;
+    motes.renderOrder = 11;
+    scene.add(motes);
+  }
+
   // building interior fill
   const fillA = new THREE.PointLight(0xcfe6ff, 42, 34, 1.9); fillA.position.set(-46, 6.5, -10); scene.add(fillA);
   const fillD = new THREE.PointLight(0xa8dcff, 46, 34, 1.9); fillD.position.set(44, 5.0, -32); scene.add(fillD);
@@ -1107,6 +1267,8 @@ export function buildWorld(scene, renderer) {
 
   function update(dt, camPos) {
     t += dt;
+    skyDome.position.copy(camPos);
+    if (!REDUCED_MOTION) atmo.time.value = t;      // simulation time only: deterministic under ?test=1
     /* Shadow camera follow: the anchor snaps to the texel grid and the light/target offset stays constant
        (directional light, fixed direction), so the shadow map content doesn't swim frame to frame. */
     const ax = Math.round(camPos.x / SHADOW_TEXEL) * SHADOW_TEXEL;
@@ -1123,6 +1285,8 @@ export function buildWorld(scene, renderer) {
     lights: { hemi, moon, lampLights, farFill, bounce, fills: [fillA, fillB, fillD] },
     update,
     setPostGlow(on) { for (const sp of glowSprites) sp.visible = !on; },
+    /* clock driving shaft noise and mote drift (simulation seconds; stays 0 under prefers-reduced-motion) */
+    get atmosphereTime() { return atmo.time.value; },
     bounds: WORLD.bounds,
   };
 }
