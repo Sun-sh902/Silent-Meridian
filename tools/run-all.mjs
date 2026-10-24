@@ -1,10 +1,10 @@
 /* ============================================================
-   run-all.mjs — 一条命令跑完全部验收脚本
+   run-all.mjs — run every acceptance suite with one command
    ------------------------------------------------------------
-   · 先做 Chrome 存在性检查（缺失时立刻给出提示，而不是每个套件各崩一次）
-   · 全部跑完再汇总（某个套件失败不会中断其余套件）
-   · 任一套件非零退出 => 本进程非零退出
-   用法： npm test
+   · checks for Chrome first (one clear message instead of every suite crashing separately)
+   · runs everything, then summarises (one failing suite doesn't stop the rest)
+   · any suite exiting non-zero => this process exits non-zero
+   Usage: npm test
    ============================================================ */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -16,13 +16,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
 const node = process.execPath;
 
-/* Chrome 预检：缺失直接退出 2，避免每个套件各报一次 */
+/* Chrome preflight: exit 2 at once when missing, rather than every suite reporting it */
 const chrome = resolveChromePath();
 console.log('[run-all] Chrome: ' + chrome);
 if (!existsSync(join(ROOT, 'dist', 'silent-meridian.html'))) {
-  console.log('[run-all] 提示：dist/ 不存在 —— check-dist 会直接失败，');
-  console.log('           click-test 的「单文件版」与 file:// 场景也会失败。');
-  console.log('           修复： node build.mjs');
+  console.log('[run-all] note: dist/ is missing — check-dist will fail outright,');
+  console.log('           and click-test\'s single-file and file:// scenarios will fail too.');
+  console.log('           fix: node build.mjs');
 }
 
 const SUITES = [
@@ -52,12 +52,12 @@ for (const [name, args] of SUITES) {
 }
 
 console.log('');
-console.log('================ 汇总 ================');
+console.log('================ SUMMARY ================');
 for (const s of summary) console.log((s.ok ? '  PASS  ' : '  FAIL  ') + s.name.padEnd(18) + s.secs + 's');
 const failed = summary.filter((s) => !s.ok);
 if (failed.length) {
   console.log('');
-  console.log('---------------- 失败详情 ----------------');
+  console.log('---------------- FAILURE DETAILS ----------------');
   for (const s of failed) {
     console.log('### ' + s.name + ' (exit ' + s.status + ')');
     const lines = s.out.trimEnd().split('\n');
@@ -66,6 +66,6 @@ if (failed.length) {
     console.log('');
   }
 }
-console.log('总耗时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's，' +
-  (summary.length - failed.length) + '/' + summary.length + ' 套件通过');
+console.log('Total ' + ((Date.now() - t0) / 1000).toFixed(1) + 's, ' +
+  (summary.length - failed.length) + '/' + summary.length + ' suites passed');
 process.exit(failed.length ? 1 : 0);

@@ -1,10 +1,10 @@
-# 正常按文本处理，统一 LF（跨平台 clone 后内容哈希才稳定，check-dist 才靠得住）
+# Treat as text, normalise to LF (content hashes must be stable across platforms for check-dist to be reliable)
 * text=auto eol=lf
 
-# 构建产物：生成物 + 单行超长，不参与 diff / 合并
+# Build output: generated + very long single lines; keep out of diff / merge
 dist/silent-meridian.js   linguist-generated=true -diff -merge
 dist/silent-meridian.html linguist-generated=true -diff -merge
 dist/build-stamp.json     linguist-generated=true
 
-# 截图
+# Screenshots
 docs/shots/*.png binary

@@ -1,5 +1,5 @@
 /* ============================================================
-   player.js — 队长控制器：移动、观察、射击、互动
+   player.js — team lead controller: movement, observation, firing, interaction
    ============================================================ */
 import * as THREE from 'three';
 import { Actor } from './actors.js';
@@ -11,7 +11,7 @@ import { feel } from './feel.js';
 export class Player extends Actor {
   constructor(game, cfg) {
     super(game, {
-      kind: 'player', name: '队长', callsign: 'LEAD',
+      kind: 'player', name: 'Team lead', callsign: 'LEAD',
       x: cfg.x, z: cfg.z, yaw: cfg.yaw, hp: cfg.hp || 120, speed: 3.0,
     });
     this.pitch = 0;
@@ -38,17 +38,17 @@ export class Player extends Actor {
     this.stamina = 1;
     this.burstCount = 0;
     this.shotsFired = 0;
-    /* 诊断用记录字段：默认关闭，不参与任何判定逻辑 */
+    /* diagnostic fields: off by default, never used by any game logic */
     this.lastSpread = 0;
     this.lastShotIndex = 0;
-    this.logShots = false;        // 打开后逐发记录弹道，用于「可学习弹道」验算
+    this.logShots = false;        // when on, logs every shot's trajectory (to verify "learnable recoil")
     this.shotLog = [];
     this.legPhase = 0;
   }
 
   get def() { return this.active === 'primary' ? this.primaryDef : this.sidearmDef; }
 
-  /* ---------------- 视角 ---------------- */
+  /* ---------------- View ---------------- */
   look(dx, dy) {
     const sens = feel.camera.sensBase * (1 - this.ads * feel.camera.adsSensMul);
     this.yaw -= dx * sens;
@@ -62,14 +62,14 @@ export class Player extends Actor {
     return { x: -Math.sin(this.yaw) * cp, y: sp, z: -Math.cos(this.yaw) * cp };
   }
 
-  /* ---------------- 每帧 ---------------- */
+  /* ---------------- Per frame ---------------- */
   update(dt, input) {
     if (!this.alive) return;
     this.updateCommon(dt);
     const g = this.game;
     this.stamina = clamp(this.stamina + dt * feel.move.staminaRegen, 0, 1);
 
-    /* --- 移动 --- */
+    /* --- movement --- */
     let fx = 0, fz = 0;
     if (input.keys.has('KeyW')) fz -= 1;
     if (input.keys.has('KeyS')) fz += 1;
@@ -100,11 +100,11 @@ export class Player extends Actor {
       this.bob += dt * feel.camera.bobSpeedIdle;
     }
 
-    /* --- 瞄准 --- */
+    /* --- aiming --- */
     const wantAds = input.rmb && this.reloading <= 0 && this.alive;
     this.ads = clamp(this.ads + (wantAds ? dt * feel.reload.adsInSpeed : -dt * feel.reload.adsOutSpeed), 0, 1);
 
-    /* --- 换弹 --- */
+    /* --- reload --- */
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) {
@@ -117,35 +117,35 @@ export class Player extends Actor {
       }
     }
 
-    /* --- 射击 --- */
-    /* fireCd 与 blind 已由本帧开头的 updateCommon(dt) 递减过了（actors.js）。
-       这里曾经再减一次，等于每帧递减 2×dt：
-         · 射速翻倍（MR-4 标称 640rpm 实测 ~1280rpm）
-         · 闪光弹致盲时长被砍半（2.5~7s 只剩 1.25~3.5s）
-       不要再在这里递减。 */
+    /* --- firing --- */
+    /* fireCd and blind were already decremented by updateCommon(dt) at the top of this frame (actors.js).
+       They used to be decremented again here, i.e. 2×dt per frame:
+         · double fire rate (MR-4 rated 640 rpm measured ~1280 rpm)
+         · flashbang blind time halved (2.5–7 s became 1.25–3.5 s)
+       Do not decrement them here again. */
     const canFire = this.alive && this.reloading <= 0 && this.fireCd <= 0 && this.blind <= 0;
     const d = this.def;
     if ((input.lmb || input.lmbPressed) && canFire && !g.paused) {
       if (d.mode === 'SEMI' || d.mode === 'REVOLVER' || d.mode === 'PUMP') {
-        if (input.lmbPressed) this.fireOnce();   // 一次点击 = 一发
+        if (input.lmbPressed) this.fireOnce();   // one click = one round
       } else {
         this.fireOnce();
       }
     }
     if (!input.lmb) this.burstCount = 0;
 
-    /* --- 后坐恢复 --- */
+    /* --- recoil recovery --- */
     this.recoil.pitch *= Math.exp(-dt * feel.weapon.recoilDecayPitch);
     this.recoil.yaw *= Math.exp(-dt * feel.weapon.recoilDecayYaw);
     this.pitch = clamp(this.pitch + this.recoil.pitch * dt * feel.weapon.recoilPitchToAim, -1.45, 1.45);
     this.yaw += this.recoil.yaw * dt * feel.weapon.recoilYawToAim;
 
-    /* --- 走动摆动 --- */
+    /* --- walk bob --- */
     const bobAmt = this.moving * (1 - this.ads * feel.camera.swayAdsDamp) * (this.stance === 'sprint' ? feel.camera.sprintBobMul : 1.0);
     this.sway.x = Math.sin(this.bob) * feel.camera.swayAmpX * bobAmt;
     this.sway.y = Math.abs(Math.cos(this.bob)) * feel.camera.swayAmpY * bobAmt;
 
-    /* --- 投掷蓄力 --- */
+    /* --- throw charge --- */
     if (input.keys.has('KeyG')) this.throwCharge = Math.min(1, this.throwCharge + dt * 1.6);
     else if (this.throwCharge > 0) { this.throwGadget(this.throwCharge); this.throwCharge = 0; }
 
@@ -157,7 +157,7 @@ export class Player extends Actor {
     if (this.mag[this.active] <= 0) {
       this.game.audio.dryFire();
       this.fireCd = 0.28;
-      this.game.log('弹匣已空 — 按 R 换弹', 'warn');
+      this.game.log('Magazine empty — R to reload', 'warn');
       return;
     }
     this.mag[this.active]--;
@@ -205,7 +205,7 @@ export class Player extends Actor {
     if (this.logShots) this.shotLog.push({ s: this.lastSpread, p: this.recoil.pitch, y: this.recoil.yaw });
     this.game.onPlayerShot();
 
-    if (this.mag[this.active] === 0) this.game.log('弹匣已空 — 按 R 换弹', 'warn');
+    if (this.mag[this.active] === 0) this.game.log('Magazine empty — R to reload', 'warn');
   }
 
   muzzleWorld() {
@@ -229,7 +229,7 @@ export class Player extends Actor {
     this.reloading = d.reload * feel.reload.reloadScale;
     this.ads = 0;
     this.game.audio.reloadStart();
-    this.game.log(`换弹 — ${d.short}`, '');
+    this.game.log(`Reloading — ${d.short}`, '');
   }
 
   switchWeapon() {
@@ -237,12 +237,12 @@ export class Player extends Actor {
     this.reloading = 0;
     this.fireCd = feel.reload.switchFireCd;
     this.game.audio.click();
-    this.game.log(`切换武器 — ${this.def.short}`, '');
+    this.game.log(`Weapon — ${this.def.short}`, '');
   }
 
   throwGadget(power) {
     const g = this.game;
-    if (this.gadgetCount <= 0) { g.log('战术器材已耗尽', 'warn'); return; }
+    if (this.gadgetCount <= 0) { g.log('No gadgets left', 'warn'); return; }
     const d = this.gadgetDef;
     this.gadgetCount--;
     const f = this.forward;
@@ -263,35 +263,35 @@ export class Player extends Actor {
       fuse: d.fuse, radius: d.radius, mesh, rest: false, spin: 0,
     });
     g.audio.throwItem();
-    g.log(`投掷 ${d.short}`, '');
+    g.log(`Throwing ${d.short}`, '');
     g.stats.gadgets++;
   }
 
-  /* ---------------- 互动 ---------------- */
+  /* ---------------- Interaction ---------------- */
   findInteraction() {
     const g = this.game;
     const eye = this.eye;
-    // 1. 目标：拘押 / 护送 / 救援
+    // 1. targets: detain / escort / revive
     let best = null, bestD = 3.4;
     for (const a of g.actors) {
       if (a === this || a.safe) continue;
       const d = dist2D(this.pos.x, this.pos.z, a.pos.x, a.pos.z);
       if (d > bestD) continue;
       if (a.kind === 'suspect' && a.alive && a.surrendered && !a.detained) {
-        best = { label: `拘押 ${a.name}`, action: 'detain', target: a, d };
+        best = { label: `Detain ${a.name}`, action: 'detain', target: a, d };
       } else if (a.kind === 'civilian' && a.alive && !a.escorted) {
-        if (!best || best.action !== 'detain') best = { label: `护送平民撤离（${a.label}）`, action: 'escort', target: a, d };
+        if (!best || best.action !== 'detain') best = { label: `Escort out (${a.label})`, action: 'escort', target: a, d };
       } else if (a.kind === 'squad' && !a.alive && a.revivable() && this.gadgetDef.id === 'trauma' && this.gadgetCount > 0) {
-        if (!best || best.action === 'escort') best = { label: `急救 ${a.callsign}`, action: 'revive', target: a, d };
+        if (!best || best.action === 'escort') best = { label: `Treat ${a.callsign}`, action: 'revive', target: a, d };
       }
     }
-    // 2. 任务物品
+    // 2. mission items
     for (const key of ['manifest', 'evidence']) {
       const o = g.objectiveProps[key];
       if (!o || o.taken) continue;
       const d = dist2D(this.pos.x, this.pos.z, o.x, o.z);
       if (d < 2.6 && (!best || best.action !== 'detain')) {
-        best = { label: `取回${o.label}`, action: 'take', key, target: o, d };
+        best = { label: `Take ${o.label}`, action: 'take', key, target: o, d };
       }
     }
     return best;
@@ -320,19 +320,19 @@ export class Player extends Actor {
     }
   }
 
-  /* ---------------- 相机 ---------------- */
-  /* dt 必须传进来：FOV 过渡用 damp() 而不是「每帧乘以固定比例」。
-     原来的 `camera.fov += (target - camera.fov) * 0.18` 在 144Hz 下收敛速度是
-     60Hz 的 ~2.4 倍 —— 视场角过渡、开镜手感会随显示器刷新率变化。 */
+  /* ---------------- Camera ---------------- */
+  /* dt must be passed in: the FOV transition uses damp(), not "multiply by a fixed ratio each frame".
+     The old `camera.fov += (target - camera.fov) * 0.18` converged ~2.4× faster at 144 Hz than at
+     60 Hz — FOV transitions and ADS feel changed with monitor refresh rate. */
   applyCamera(camera, dt = 1 / 60) {
     if (!this.alive) {
-      // 倒地视角
+      // downed view
       camera.position.set(this.pos.x, 0.42, this.pos.z);
       camera.rotation.set(0, 0, 0);
       camera.rotateY(this.yaw);
       camera.rotateX(-0.22);
       camera.rotateZ(1.15);
-      camera.fov = damp(camera.fov, 78, 7.7, dt);   // 等效 60fps 下的 0.12
+      camera.fov = damp(camera.fov, 78, 7.7, dt);   // equivalent to 0.12 at 60 fps
       camera.updateProjectionMatrix();
       return;
     }
@@ -348,7 +348,7 @@ export class Player extends Actor {
     const adsFov = feel.camera.adsFovOverride > 0 ? feel.camera.adsFovOverride : this.def.adsFov;
     const targetFov = this.ads > feel.move.adsGate ? adsFov
       : (this.stance === 'sprint' ? feel.camera.fovSprint : feel.camera.fovDefault);
-    camera.fov = damp(camera.fov, targetFov, 11.9, dt);   // 等效 60fps 下的 0.18
+    camera.fov = damp(camera.fov, targetFov, 11.9, dt);   // equivalent to 0.18 at 60 fps
     camera.updateProjectionMatrix();
   }
 }

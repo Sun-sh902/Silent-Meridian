@@ -1,5 +1,5 @@
 /* ============================================================
-   screens.js — 主菜单 / 简报 / 装备配置 / 战果面板 / 暂停
+   screens.js — main menu / briefing / loadout / debrief / pause
    ============================================================ */
 import { WEAPONS, GADGETS, ARMORS, DEFAULT_LOADOUT, SQUAD_ROSTER, OBJECTIVES } from './data.js';
 import { clamp } from './geom.js';
@@ -17,9 +17,9 @@ export class Screens {
 
   wire() {
     /* ------------------------------------------------------------
-       全部按钮只在 #app 容器上委托一次：
-       不依赖 DOMContentLoaded 时机，也不依赖脚本执行顺序，
-       动态生成的按钮（如装备选项）同样自动生效。
+       All buttons are delegated once on the #app container:
+       independent of DOMContentLoaded timing and script order,
+       and dynamically generated buttons (e.g. loadout picks) work automatically.
        ------------------------------------------------------------ */
     this.actions = {
       'screen':     (el) => this.show(el.dataset.screen),
@@ -43,7 +43,7 @@ export class Screens {
       try {
         fn(el);
       } catch (err) {
-        console.error('[SILENT MERIDIAN] 动作执行失败：' + el.dataset.action, err);
+        console.error('[SILENT MERIDIAN] action failed: ' + el.dataset.action, err);
       }
     });
     if (window.__SM_DEBUG) {
@@ -63,7 +63,7 @@ export class Screens {
     this.game.audio.click(0.18, 1200);
   }
 
-  /* ---------------- 装备配置 ---------------- */
+  /* ---------------- Loadout ---------------- */
   buildLoadout() {
     const mk = (container, items, key, fmt) => {
       container.innerHTML = '';
@@ -109,21 +109,21 @@ export class Screens {
     const prot = clamp(a.hp / 1.7, 20, 100);
     const obsBase = g.id === 'smoke' ? 88 : g.id === 'flash' ? 82 : 74;
     const rows = [
-      ['火力', Math.round(fire)], ['精度', Math.round(acc)],
-      ['机动', Math.round(mob)], ['防护', Math.round(prot)],
-      ['观察', Math.round(clamp(obsBase * (p.id === 'k9' ? 1.06 : 1) * (a.id === 'light' ? 1.08 : 1), 0, 100))],
+      ['Firepower', Math.round(fire)], ['Accuracy', Math.round(acc)],
+      ['Mobility', Math.round(mob)], ['Protection', Math.round(prot)],
+      ['Observation', Math.round(clamp(obsBase * (p.id === 'k9' ? 1.06 : 1) * (a.id === 'light' ? 1.08 : 1), 0, 100))],
     ];
     $('#stat-bars').innerHTML = rows.map(([k, v]) =>
       `<div class="bar-row"><span>${k}</span><div class="track"><i style="width:${v}%"></i></div><b>${v}</b></div>`).join('');
   }
 
-  /* ---------------- 战果 ---------------- */
+  /* ---------------- Debrief ---------------- */
   showDebrief(res) {
     const t = $('#debrief-title');
-    t.textContent = res.success ? '行动完成 — 港区已控制' : '行动中止 — 目标未达成';
+    t.textContent = res.success ? 'Operation complete — port secured' : 'Operation aborted — objectives not met';
     const gs = $('#grade-stamp');
     gs.className = res.grade === 'S' ? 'doc-stamp s' : 'doc-stamp';
-    gs.innerHTML = `评级<br><b>${res.grade}</b>`;
+    gs.innerHTML = `GRADE<br><b>${res.grade}</b>`;
 
     const ol = $('#debrief-objectives');
     ol.innerHTML = '';
@@ -137,18 +137,18 @@ export class Screens {
 
     const sg = $('#debrief-stats');
     const rows = [
-      ['用时', res.time, ''],
-      ['射击发数', res.shots, ''],
-      ['命中率', res.accuracy + '%', res.accuracy >= 35 ? 'good' : res.accuracy >= 18 ? 'warn' : 'bad'],
-      ['盲射（未识别即开火）', res.blindShots, res.blindShots <= 2 ? 'good' : res.blindShots <= 6 ? 'warn' : 'bad'],
-      ['嫌疑人拘押', `${res.detained} / ${res.suspectTotal}`, res.detained > 0 ? 'good' : ''],
-      ['嫌疑人击毙', res.killed, res.killed === 0 ? 'good' : ''],
-      ['嫌疑人脱逃', res.escaped, res.escaped === 0 ? 'good' : 'warn'],
-      ['平民安全撤离', `${res.civSafe} / ${res.civTotal}`, res.civSafe === res.civTotal ? 'good' : 'warn'],
-      ['平民伤亡', res.civLost, res.civLost === 0 ? 'good' : 'bad'],
-      ['指令次数', res.orders, ''],
-      ['队员伤亡', res.squadDown, res.squadDown === 0 ? 'good' : 'bad'],
-      ['投掷器材', res.gadgets, ''],
+      ['Time', res.time, ''],
+      ['Rounds fired', res.shots, ''],
+      ['Hit rate', res.accuracy + '%', res.accuracy >= 35 ? 'good' : res.accuracy >= 18 ? 'warn' : 'bad'],
+      ['Blind shots (fired before ID)', res.blindShots, res.blindShots <= 2 ? 'good' : res.blindShots <= 6 ? 'warn' : 'bad'],
+      ['Suspects detained', `${res.detained} / ${res.suspectTotal}`, res.detained > 0 ? 'good' : ''],
+      ['Suspects killed', res.killed, res.killed === 0 ? 'good' : ''],
+      ['Suspects escaped', res.escaped, res.escaped === 0 ? 'good' : 'warn'],
+      ['Civilians evacuated', `${res.civSafe} / ${res.civTotal}`, res.civSafe === res.civTotal ? 'good' : 'warn'],
+      ['Civilian casualties', res.civLost, res.civLost === 0 ? 'good' : 'bad'],
+      ['Orders given', res.orders, ''],
+      ['Squad casualties', res.squadDown, res.squadDown === 0 ? 'good' : 'bad'],
+      ['Gadgets used', res.gadgets, ''],
     ];
     sg.innerHTML = rows.map(([k, v, c]) =>
       `<div class="st-cell"><span>${k}</span><b class="${c}">${v}</b></div>`).join('');
@@ -159,14 +159,14 @@ export class Screens {
       const d = document.createElement('div');
       d.className = 'rr ' + (m.alive ? (m.hp > m.maxHp * 0.6 ? 'ok' : 'hurt') : 'down');
       d.innerHTML = `<div class="rn"><b>${m.callsign}</b><span>${m.role || ''}</span></div>
-        <div class="rs">${m.alive ? `在岗 ${Math.round(m.hp)}/${m.maxHp}` : '失去行动能力'}</div>`;
+        <div class="rs">${m.alive ? `On duty ${Math.round(m.hp)}/${m.maxHp}` : 'Down'}</div>`;
       sr.appendChild(d);
     }
 
-    $('#debrief-comment').innerHTML = `<div class="ct">事后评述 / AFTER-ACTION</div><p>${res.comment}</p>`;
+    $('#debrief-comment').innerHTML = `<div class="ct">After-action note</div><p>${res.comment}</p>`;
   }
 
-  /* ---------------- 屏幕切换 ---------------- */
+  /* ---------------- Screen switching ---------------- */
   hideAll() {
     ['title', 'briefing', 'loadout', 'debrief', 'help', 'pause'].forEach((s) => {
       const el = $('#screen-' + s);
@@ -181,9 +181,9 @@ export class Screens {
     this.current = name;
     if (name === 'loadout') this.refreshStats();
     document.body.style.cursor = name === 'game' ? 'none' : 'default';
-    /* 键盘可达性：界面切换后把焦点移入新界面。
-       此前 .hidden{display:none} 会把持有焦点的元素整个移出渲染树，
-       焦点静默掉回 <body>，Tab 顺序从文档开头重来，键盘用户会失去位置感。 */
+    /* Keyboard accessibility: move focus into the new screen after a switch.
+       Previously .hidden{display:none} removed the focused element from the render tree,
+       focus silently fell back to <body> and Tab order restarted at the top — keyboard users lost their place. */
     if (el && name !== 'game') {
       const first = el.querySelector('button:not([disabled]), [href], input, select, textarea');
       if (first) first.focus({ preventScroll: true });
@@ -202,10 +202,10 @@ export class Screens {
 }
 
 function objectiveNote(id, st, res) {
-  if (id === 'manifest') return st === 'done' ? '货运货单已取回并封存' : '货单未取回';
-  if (id === 'evidence') return st === 'done' ? '调度室监控与登记记录已提取' : '调度室证据未获取';
-  if (id === 'civilians') return st === 'done' ? `${res.civSafe} 名夜班工人安全撤离` : `仅 ${res.civSafe} 人撤离`;
-  if (id === 'suspects') return `拘押 ${res.detained} · 击毙 ${res.killed} · 脱逃 ${res.escaped}`;
-  if (id === 'extract') return st === 'done' ? '小队已撤出港区' : '小队未完成撤离';
+  if (id === 'manifest') return st === 'done' ? 'Manifest recovered and sealed' : 'Manifest not recovered';
+  if (id === 'evidence') return st === 'done' ? 'Dispatch CCTV and gate log secured' : 'Dispatch evidence not secured';
+  if (id === 'civilians') return st === 'done' ? `${res.civSafe} night crew evacuated` : `Only ${res.civSafe} evacuated`;
+  if (id === 'suspects') return `Detained ${res.detained} · killed ${res.killed} · escaped ${res.escaped}`;
+  if (id === 'extract') return st === 'done' ? 'Squad clear of the port' : 'Squad did not exfil';
   return '';
 }

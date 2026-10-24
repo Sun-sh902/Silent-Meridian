@@ -1,5 +1,5 @@
 /* ============================================================
-   hud.js — 平视显示：目标卡、罗盘、小队面板、小地图、日志
+   hud.js — heads-up display: target card, compass, squad panel, minimap, log
    ============================================================ */
 import { OBJECTIVES, ORDER_NAMES, DIRECTIONS, MAP_COLORS } from './data.js';
 import { clamp } from './geom.js';
@@ -51,7 +51,7 @@ export class HUD {
       cursorHint: $('#cursor-hint'),
       damage: $('#damage-flash'),
       grade: $('#grade'),
-      whiteout: $('#whiteout'),   // 缓存：flash() 原本每次调用都重新 getElementById
+      whiteout: $('#whiteout'),   // cached: flash() used to getElementById on every call
     };
     this.ctxCompass = this.el.compass.getContext('2d');
     this.ctxMini = this.el.minimap.getContext('2d');
@@ -63,32 +63,32 @@ export class HUD {
     this.buildObjectives();
     this.buildSquad();
     this.markerCache = null;
-    /* 小地图：静态建筑层离屏缓存 + 复用缓冲 + 标签避让（全部零分配） */
+    /* minimap: offscreen-cached static building layer + reused buffers + label avoidance (all zero-allocation) */
     this.miniStatic = null;
     this.miniStaticBounds = null;
-    this.pt = { x: 0, y: 0 };            // 复用的坐标缓冲
+    this.pt = { x: 0, y: 0 };            // reused coordinate buffer
     this.placer = new LabelPlacer(48);
-    this.zoneItems = [];                 // 预计算的地名候选（含面积用于排序）
+    this.zoneItems = [];                 // precomputed place-name candidates (with area for sorting)
     this.miniRange = 46;
-    this.drawnLabels = [];      // 本帧真正画出的地名（供 __mapDebug 回查）
+    this.drawnLabels = [];      // place names actually drawn this frame (for __mapDebug lookups)
     this.drawnN = 0;
     this.labelStats = { total: 0, drawn: 0, rejected: 0, edge: 0 };
-    /* 逐帧写入缓存：只有值真的变化时才碰 DOM。
-       实测（tools/perf-probe.mjs）此前每帧约 27 次 DOM 变更、55 次布局读取，
-       其中绝大多数是把同一个字符串/类名重复写一遍 —— 每次都产生一条
-       mutation record 并可能触发样式重算。 */
+    /* Per-frame write cache: touch the DOM only when a value really changes.
+       Measured (tools/perf-probe.mjs): previously ~27 DOM mutations and 55 layout reads per frame,
+       most of them rewriting the same string/class — each one produced a
+       mutation record and could trigger a style recalc. */
     this._w = Object.create(null);
-    this._roster = [];                   // 复用的花名册缓冲，避免每帧展开分配
+    this._roster = [];                   // reused roster buffer, no per-frame spread allocation
     this._intTick = 0;
     this._intCache = null;
     this.buildMiniStatic();
     this.buildZoneItems();
-    /* 3. canvas 尺寸随布局变化重算（含浏览器缩放导致的 DPR 变化） */
+    /* 3. recompute canvas size on layout changes (including DPR changes from browser zoom) */
     this.sizeWatch = watchResize(document.getElementById('hud') || document.body, () => this.onResize());
   }
 
   /* ------------------------------------------------------------
-     写入缓存辅助：写入前先比对，相同则完全跳过（不产生 DOM 变更）
+     Write-cache helpers: compare before writing, skip entirely when equal (no DOM mutation)
      ------------------------------------------------------------ */
   _text(key, el, val) {
     const s = String(val);
@@ -102,14 +102,14 @@ export class HUD {
     this._w[key] = s;
     el.style.width = s;
   }
-  /* classList.toggle 本身幂等（无变化则不产生 mutation），这里只做短路省掉调用开销 */
+  /* classList.toggle is already idempotent (no mutation when unchanged); this just short-circuits the call */
   _cls(key, el, name, on) {
     const k = key + '|' + name;
     if (this._w[k] === on) return;
     this._w[k] = on;
     el.classList.toggle(name, on);
   }
-  /* 缓存的 canvas CSS 尺寸：由 drawMinimap 每帧写入一次，供 worldToMap 复用 */
+  /* cached canvas CSS size: written once per frame by drawMinimap, reused by worldToMap */
   _syncCanvasSize() {
     const cv = this.el.minimap;
     this._W = cv.clientWidth || 1;
@@ -117,8 +117,8 @@ export class HUD {
   }
 
   /* ------------------------------------------------------------
-     静态建筑层：一次性烘焙到离屏画布（世界坐标 1:1，6 px/m）
-     每帧只做一次旋转 drawImage，不再逐栋重画 ~200 个矩形
+     Static building layer: baked once into an offscreen canvas (world 1:1, 6 px/m)
+     one rotated drawImage per frame instead of redrawing ~200 rects
      ------------------------------------------------------------ */
   buildMiniStatic() {
     const w = this.game.world;
@@ -138,7 +138,7 @@ export class HUD {
     cv.width = Math.max(1, Math.round((x1 - x0) * SPP));
     cv.height = Math.max(1, Math.round((z1 - z0) * SPP));
     const g = cv.getContext('2d');
-    g.setTransform(SPP, 0, 0, SPP, -x0 * SPP, -z0 * SPP);   // 之后直接用世界米坐标
+    g.setTransform(SPP, 0, 0, SPP, -x0 * SPP, -z0 * SPP);   // from here on, world metres directly
     g.fillStyle = 'rgba(120,160,180,.18)';
     g.strokeStyle = 'rgba(140,190,210,.30)';
     g.lineWidth = 1.2 / SPP;
@@ -152,7 +152,7 @@ export class HUD {
     this.miniStaticBounds = { x0, z0, x1, z1 };
   }
 
-  /* 地名候选：面积大的先放，小房间（办公室/调度室）自然在碰撞中被挤掉 */
+  /* place-name candidates: largest area first; small rooms (office/ops) naturally lose collisions */
   buildZoneItems() {
     const w = this.game.world;
     if (!w || !w.zones) return;
@@ -166,24 +166,24 @@ export class HUD {
         dist: 0, key: 0,
       });
     }
-    /* 排序键缓存比较器：只创建一次，逐帧复用，避免 GC */
+    /* cached sort-key comparator: created once, reused per frame, no GC */
     this._zoneCmp = (a, b) => a.key - b.key;
   }
 
   /* ------------------------------------------------------------
-     世界坐标 → 小地图像素坐标
-     ① 平移到玩家为原点 → ② 绕原点旋转 +yaw → ③ 缩放 k → ④ 平移到画布中心
-     （旋转中心 = 玩家自身；角度每帧由绝对 yaw 重算，无累积漂移）
+     World → minimap pixel coordinates
+     ① translate so the player is the origin → ② rotate by +yaw about it → ③ scale by k → ④ translate to canvas centre
+     (rotation centre = the player; angle recomputed from absolute yaw every frame, so no drift)
      ------------------------------------------------------------ */
   worldToMap(wx, wz, out) {
     const p = this.game.player;
-    /* 尺寸走缓存：drawMinimap 每帧只读一次布局并写入 _W/_H。
-       此前这里每次调用都读 clientWidth/clientHeight，而本函数每帧被调用
-       约 25 次（任务点 + 事件 + 全部演员 + 地名），是每帧 50+ 次布局读取的主因。 */
+    /* Size comes from the cache: drawMinimap reads layout once per frame and writes _W/_H.
+       This used to read clientWidth/clientHeight on every call, and the function runs
+       ~25 times per frame (objectives + events + all actors + place names) — the main cause of 50+ layout reads per frame. */
     if (!this._W || !this._H) this._syncCanvasSize();
     const W = this._W, H = this._H;
-    /* 角度仍用实时 yaw，不依赖上一帧缓存
-       （否则外部改完 yaw 立刻查询会拿到旧角度） */
+    /* the angle still uses live yaw, not last frame's cache
+       (otherwise querying right after an external yaw change returns the old angle) */
     const k = (W / 2) / this.miniRange;
     const C = Math.cos(p.yaw), S = Math.sin(p.yaw);
     const dx = wx - p.pos.x, dz = wz - p.pos.z;
@@ -194,14 +194,14 @@ export class HUD {
   }
 
   onResize() {
-    // 尺寸变化时立即重绘两块 canvas，避免出现拉伸的旧帧
+    // redraw both canvases immediately on resize, so no stretched stale frame shows
     if (this.game && this.game.world && this.game.player) {
       this.updateCompass(this.game);
       this.drawMinimap(this.game);
     }
   }
 
-  /* ---------------- 静态结构 ---------------- */
+  /* ---------------- Static structure ---------------- */
   buildObjectives() {
     this.el.objectives.innerHTML = '';
     for (const o of OBJECTIVES) {
@@ -223,14 +223,14 @@ export class HUD {
       d.innerHTML = `
         <span class="idx">${String(i + 1).padStart(2, '0')}</span>
         <span class="nm"><b>${a.callsign}</b><span>${a.kind === 'player' ? 'SQUAD LEADER' : (a.tag || 'RIFLEMAN')}</span></span>
-        <span class="st">待命</span>
+        <span class="st">Standby</span>
         <span class="hp" style="grid-column:2/4"><i style="width:100%"></i></span>`;
       this.el.squadList.appendChild(d);
       this.squadEls[a.id] = { root: d, hp: d.querySelector('.hp i'), st: d.querySelector('.st') };
     });
   }
 
-  /* ---------------- 每帧 ---------------- */
+  /* ---------------- Per frame ---------------- */
   update(dt, game) {
     const p = game.player;
     this.updateObjectives(game);
@@ -244,15 +244,15 @@ export class HUD {
     this.setCursorMode(!!game.cursorMode);
     this.el.reticle.classList.toggle('ads', p.ads > 0.5);
     const ringR = 42 * 2 * Math.PI;
-    /* stroke-dasharray 已是 ui.css 里的静态值（264），不必每帧重写；
-       只有 dashoffset 随识别进度连续变化。 */
+    /* stroke-dasharray is already a static value in ui.css (264), no need to rewrite it per frame;
+       only dashoffset changes continuously with identification progress. */
     const off = ringR * (1 - (game.observeTarget ? game.observeTarget.ident : 0));
     if (this._w.ringOff !== off) { this._w.ringOff = off; this.el.observeFg.style.strokeDashoffset = off; }
     this.el.observeRing.classList.toggle('on', !!game.observeTarget && game.observeTarget.ident < 1);
 
-    /* 交互提示：findInteraction 会遍历全部演员并构造对象/模板串，
-       不必每帧算一次 —— 每 4 帧刷新一次，手感上察觉不到。
-       注意 doInteract() 仍会在按键时实时调用一次，保证动作与提示一致。 */
+    /* Interaction prompt: findInteraction walks every actor and builds objects/template strings,
+       so it needn't run every frame — refreshing every 4 frames is imperceptible.
+       doInteract() still calls it live on keypress, so the action always matches the prompt. */
     if ((this._intTick++ & 3) === 0) this._intCache = p.findInteraction();
     const it = this._intCache;
     if (it) {
@@ -262,7 +262,7 @@ export class HUD {
       this._cls('prompt', this.el.prompt, 'hidden', true);
     }
 
-    // 字幕 / 日志计时
+    // subtitle / log timers
     if (this.subTimer > 0) {
       this.subTimer -= dt;
       if (this.subTimer <= 0) this.el.subtitle.classList.remove('on');
@@ -275,22 +275,22 @@ export class HUD {
 
   setCursorMode(on) {
     if (!this.el.cursorHint) return;
-    /* 此前这个方法是每帧被调用的，却无条件重写 innerHTML ——
-       等于每帧做一次完整的 HTML 解析 + 子树替换，是单帧 DOM 变更的最大来源。
-       只在模式真正切换时更新。 */
+    /* This method runs every frame but used to rewrite innerHTML unconditionally —
+       a full HTML parse + subtree replace every frame, the single biggest source of DOM mutations.
+       Now it only updates when the mode actually changes. */
     if (this._w.cursorMode === on) return;
     this._w.cursorMode = on;
     this.el.cursorHint.classList.toggle('on', on);
     this.el.cursorHint.innerHTML = on
-      ? '鼠标已释放 — 可点击指令按钮（点击画面恢复视角）'
-      : '按 <b>Alt</b> 释放鼠标，即可点击上面的指令按钮';
+      ? 'Cursor free — click an order. Click the view to resume'
+      : '<b>Alt</b> frees the cursor for the order buttons';
   }
 
   updateObjectives(game) {
     for (const li of this.el.objectives.children) {
       const st = game.objectiveState[li.dataset.id];
       const k = 'obj:' + li.dataset.id;
-      if (this._w[k] === st) continue;      // 状态没变就整项跳过
+      if (this._w[k] === st) continue;      // skip the whole item if the state hasn't changed
       this._w[k] = st;
       li.className = st === 'done' ? 'done' : st === 'failed' ? 'failed' : st === 'active' ? 'active' : '';
       li.querySelector('.box').textContent = st === 'done' ? '✓' : st === 'failed' ? '✕' : '';
@@ -302,7 +302,7 @@ export class HUD {
     const a = game.alertLevel();
     this._text('alert', this.el.alert, a.text);
     if (this._w.alertCls !== a.cls) { this._w.alertCls = a.cls; this.el.alert.className = a.cls; }
-    /* 计数循环取代 filter()：原先每帧两次数组分配 */
+    /* counting loops instead of filter(): previously two array allocations per frame */
     let ided = 0;
     for (const x of game.actors) if (x.kind === 'suspect' && x.identified) ided++;
     let safe = 0;
@@ -314,11 +314,11 @@ export class HUD {
   updateSquad(game) {
     const order = ORDER_NAMES[game.squadOrder] || ORDER_NAMES.follow;
     this._text('orderName', this.el.orderName,
-      game.squadOrder === 'clear' && game.squadWaypoint ? `${order.cn} · 前往航点` : order.cn);
+      game.squadOrder === 'clear' && game.squadWaypoint ? `${order.label} · to waypoint` : order.label);
     for (const cmd of this.el.commandBar.children) {
       cmd.classList.toggle('active', cmd.dataset.cmd === game.squadOrder);
     }
-    /* 复用同一个数组，避免每帧 [player, ...squad] 的展开分配 */
+    /* reuse one array instead of spreading [player, ...squad] every frame */
     const roster = this._roster;
     roster.length = 0;
     roster.push(game.player);
@@ -331,12 +331,12 @@ export class HUD {
       this._cls('sq:' + a.id, e.root, 'down', !a.alive);
       this._cls('sq:' + a.id, e.root, 'hurt', a.alive && pct < 60);
       this._cls('sq:' + a.id, e.root, 'acting', a === game.actingMember);
-      let st = '待命';
-      if (!a.alive) st = '失去行动能力';
-      else if (a.blind > 0) st = '失能';
-      else if (a.kind === 'player') st = a.stance === 'sprint' ? '疾行' : a.stance === 'sneak' ? '潜行' : '移动中';
-      else if (a.vel > 0.4) st = '推进中';
-      if (a.aimTarget) st = '交战中';
+      let st = 'Standby';
+      if (!a.alive) st = 'Down';
+      else if (a.blind > 0) st = 'Stunned';
+      else if (a.kind === 'player') st = a.stance === 'sprint' ? 'Sprint' : a.stance === 'sneak' ? 'Sneak' : 'Moving';
+      else if (a.vel > 0.4) st = 'Moving';
+      if (a.aimTarget) st = 'Engaging';
       this._text('sqst:' + a.id, e.st, st);
     }
   }
@@ -353,16 +353,16 @@ export class HUD {
     this._text('wpGadget', this.el.wpGadget, `${g.short} ×${p.gadgetCount}`);
     const loading = p.reloading > 0;
     this._cls('wpReload', this.el.wpReload, 'hidden', !loading);
-    /* 只在可见时更新百分比文本（原先隐藏状态下也每帧写一次） */
+    /* only update the percentage text while visible (it used to be written every frame even when hidden) */
     if (loading) {
       this._text('wpReloadTxt', this.el.wpReload,
-        `换弹中… ${Math.max(0, (p.reloading / d.reload) * 100).toFixed(0)}%`);
+        `Reloading ${Math.max(0, (p.reloading / d.reload) * 100).toFixed(0)}%`);
     }
   }
 
   updateTarget(game) {
     const t = game.observeTarget;
-    // 倒地的队友仍要显示状态（可急救），倒地的敌人/平民不再显示
+    // downed squad members still show status (they can be revived); downed hostiles/civilians no longer do
     if (!t || (!t.alive && t.kind !== 'squad')) {
       this._cls('tc', this.el.targetCard, 'hidden', true);
       return;
@@ -372,32 +372,32 @@ export class HUD {
     this._text('tcRange', this.el.tcRange, range + ' m');
     this._width('tcIdent', this.el.tcIdent, (t.ident * 100).toFixed(0));
 
-    /* 变体类：原先用 `className = ''` 清空再 add —— 即便结果完全一样，
-       每帧都会产生一次 class 属性变更。改为只增删差异项。 */
+    /* Variant classes: previously cleared with `className = ''` then re-added — even with an identical result
+       that was a class attribute mutation every frame. Now only the differences are added/removed. */
     let variant = '';
     let cls = '', note = '';
     if (t.ident >= 0.8) {
       if (t.kind === 'suspect') {
         variant = 'armed';
-        cls = t.surrendered ? '已投降嫌疑人' : '武装嫌疑人';
-        note = t.surrendered ? '可上前拘押（E）' : (t.name || '');
+        cls = t.surrendered ? 'SUSPECT · SURRENDERED' : 'ARMED SUSPECT';
+        note = t.surrendered ? 'Move in to detain (E)' : (t.name || '');
       } else if (t.kind === 'civilian') {
         variant = 'civilian';
-        cls = '平民 · 非战斗人员';
-        note = '误伤将导致任务失败 · E 护送撤离';
+        cls = 'CIVILIAN · NON-COMBATANT';
+        note = 'Harm = mission failure · E to escort';
       } else {
         variant = 'friendly';
-        cls = t.callsign || '警备人员';
+        cls = t.callsign || 'PORT SECURITY';
         note = t.alive
-          ? `友军 · ${t.tag || '警备人员'}（不会受到你的伤害）`
-          : '失去行动能力 · 需要急救（E）';
+          ? `Friendly · ${t.tag || 'Port Security'} (no friendly fire)`
+          : 'Down · needs trauma kit (E)';
       }
     } else if (t.ident >= 0.35) {
-      cls = '人员接触 · 身份不明';
-      note = '持续观察以确认目标 · HOLD TO IDENTIFY';
+      cls = 'PERSON · UNIDENTIFIED';
+      note = 'Hold the reticle on target to identify';
     } else {
       cls = 'UNKNOWN CONTACT';
-      note = '疑似活动 · 需要观察';
+      note = 'Possible movement · observe';
     }
     if (this._w.tcVariant !== variant) {
       this._w.tcVariant = variant;
@@ -413,8 +413,8 @@ export class HUD {
     const c = this.ctxCompass;
     const cv = this.el.compass;
     const cssW = cv.clientWidth;
-    if (!cssW) return;                       // 元素被断点隐藏时不绘制
-    /* backing store = CSS 尺寸 × DPR；绘制仍用 720×58 设计坐标 */
+    if (!cssW) return;                       // skip when hidden by a breakpoint
+    /* backing store = CSS size × DPR; drawing still uses 720×58 design coordinates */
     const dpr = canvasDpr();
     const bw = Math.max(1, Math.round(cssW * dpr));
     const bh = Math.max(1, Math.round(cssW * (58 / 720) * dpr));
@@ -425,10 +425,10 @@ export class HUD {
     c.clearRect(0, 0, w, h);
     const yaw = game.player.yaw;
     const bearing = game.playerBearing();
-    const span = 130; // 可视角度
+    const span = 130; // visible angle
     const pxPerDeg = w / span;
 
-    // 刻度
+    // ticks
     c.save();
     c.translate(w / 2, h);
     c.font = '500 11px ui-monospace, monospace';
@@ -449,7 +449,7 @@ export class HUD {
     }
     c.restore();
 
-    // 标记
+    // markers
     const markers = [];
     for (const o of game.markerList()) markers.push(o);
     for (const m of markers) {
@@ -484,12 +484,12 @@ export class HUD {
     const c = this.ctxMini;
     const cv = this.el.minimap;
     const cssW = cv.clientWidth, cssH = cv.clientHeight;
-    if (!cssW || !cssH) return;              // 断点隐藏时不绘制
+    if (!cssW || !cssH) return;              // skip when hidden by a breakpoint
     const dpr = canvasDpr();
     const bw = Math.max(1, Math.round(cssW * dpr));
     const bh = Math.max(1, Math.round(cssH * dpr));
     if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
-    c.setTransform(dpr, 0, 0, dpr, 0, 0);    // 之后按 CSS 像素绘制
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);    // draw in CSS pixels from here on
     const W = cssW, H = cssH;
     c.clearRect(0, 0, W, H);
     c.fillStyle = 'rgba(6,11,16,.85)';
@@ -497,13 +497,13 @@ export class HUD {
     const p = game.player;
     const range = this.miniRange;
     const k = (W / 2) / range;
-    /* 旋转用 +yaw：玩家右转时原本正前方的目标向左移动。
-       （注意本项目 yaw 减小 = 右转，见 player.look()） */
+    /* Rotate by +yaw: when the player turns right, what was dead ahead moves left.
+       (in this project, decreasing yaw = turning right; see player.look()) */
     const C = Math.cos(p.yaw), S = Math.sin(p.yaw);
     this._C = C; this._S = S; this._k = k; this._W = W; this._H = H;
 
-    /* ---- 静态建筑层：一次 drawImage 完成旋转 ----
-       矩阵等价于 平移(-p) → 旋转(+yaw) → 缩放(k) → 平移(中心) */
+    /* ---- static building layer: rotated in one drawImage ----
+       the matrix equals translate(-p) → rotate(+yaw) → scale(k) → translate(centre) */
     if (!this.miniStatic) this.buildMiniStatic();
     if (this.miniStatic) {
       const b = this.miniStaticBounds;
@@ -514,7 +514,7 @@ export class HUD {
       c.drawImage(this.miniStatic, b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
       c.restore();
     }
-    // 任务点
+    // objectives
     for (const key of ['manifest', 'evidence', 'extract']) {
       const o = game.world.objectives[key];
       const done = game.objectiveState[key] === 'done';
@@ -529,7 +529,7 @@ export class HUD {
       c.strokeRect(-4, -4, 8, 8);
       c.restore();
     }
-    // 事件（黄点）
+    // events (yellow dots)
     for (const ev of game.mapEvents || []) {
       const age = game.missionTime - ev.t;
       if (age > 120) continue;
@@ -540,14 +540,14 @@ export class HUD {
       c.beginPath(); c.arc(m.x, m.y, 2.6, 0, 6.3); c.fill();
       c.globalAlpha = 1;
     }
-    // 单位
+    // units
     for (const a of game.actors) {
-      if (a.safe || a === p) continue;        // 玩家由中心箭头单独绘制，避免蓝点+白三角重叠
+      if (a.safe || a === p) continue;        // the player is the centre arrow; avoids a blue dot under the white triangle
       const known = a.kind === 'squad' || a.kind === 'civilian' ? true : a.seen;
       if (!known) continue;
       const m = this.worldToMap(a.pos.x, a.pos.z, this.pt);
       if (m.x < 2 || m.x > W - 2 || m.y < 2 || m.y > H - 2) continue;
-      let col = MAP_COLORS.friendly;                       // 主角与队友 —— 蓝
+      let col = MAP_COLORS.friendly;                       // player and squad — blue
       if (a.kind === 'suspect') col = a.identified ? MAP_COLORS.enemy : MAP_COLORS.unknown;
       else if (a.kind === 'civilian') col = MAP_COLORS.civilian;
       if (!a.alive) col = 'rgba(255,97,82,.55)';
@@ -558,7 +558,7 @@ export class HUD {
         c.beginPath(); c.arc(m.x, m.y, 3.4, 0, 6.3); c.fill();
       }
     }
-    /* ---- 视野扇形：角度取自真实相机水平 FOV，与准星严格一致 ---- */
+    /* ---- view cone: angle taken from the real camera horizontal FOV, exactly matching the reticle ---- */
     const cam = game.camera;
     const vfov = ((cam.fov || 72) * Math.PI) / 180;
     const half = Math.atan(Math.tan(vfov / 2) * (cam.aspect || 1));
@@ -576,10 +576,10 @@ export class HUD {
     c.stroke();
     c.restore();
 
-    /* ---- 地名标签（水平、不随旋转；按面积优先 + 碰撞避让） ---- */
+    /* ---- place-name labels (horizontal, never rotated; area priority + collision avoidance) ---- */
     const placer = this.placer;
     placer.reset();
-    placer.reserve(W / 2 - 16, H / 2 - 16, 32, 32);        // 中心留给玩家图标
+    placer.reserve(W / 2 - 16, H / 2 - 16, 32, 32);        // centre reserved for the player icon
     const FONT = '600 12px "Helvetica Neue","PingFang SC",sans-serif';
     c.font = FONT;
     c.textAlign = 'left';
@@ -594,7 +594,7 @@ export class HUD {
     for (let i = 0; i < items.length; i++) {
       const z = items[i];
       z.dist = Math.hypot(z.x - p.pos.x, z.z - p.pos.z);
-      z.key = z.dist - z.radius;             // 近处 / 大范围优先
+      z.key = z.dist - z.radius;             // near / large zones first
     }
     if (this._zoneCmp) items.sort(this._zoneCmp);
     for (let i = 0; i < items.length; i++) {
@@ -602,7 +602,7 @@ export class HUD {
       const dist = z.dist;
       const m = this.worldToMap(z.x, z.z, this.pt);
       if (dist > visibleR) {
-        /* 超出可视范围：收缩到边界画方向箭头，而不是丢掉或堆在角落 */
+        /* off the visible range: clamp to the edge as a direction arrow instead of dropping or piling in a corner */
         if (dist > 200 || edgeDrawn >= 5) continue;
         const ox = m.x - W / 2, oy = m.y - H / 2;
         const l = Math.hypot(ox, oy) || 1;
@@ -619,8 +619,8 @@ export class HUD {
       }
       const tw = measure(c, FONT, z.name);
       const tx = m.x - tw / 2, ty = m.y - 6;
-      if (tx < 2 || ty - 8 < 2 || tx + tw > W - 2 || ty + 8 > H - 2) continue;   // 越界不画
-      if (!placer.tryPlace(tx - 3, ty - 8, tw + 6, 16)) { stats.rejected++; continue; }  // 重叠让位
+      if (tx < 2 || ty - 8 < 2 || tx + tw > W - 2 || ty + 8 > H - 2) continue;   // out of bounds: skip
+      if (!placer.tryPlace(tx - 3, ty - 8, tw + 6, 16)) { stats.rejected++; continue; }  // overlap: give way
       c.fillStyle = 'rgba(6,11,16,.62)';
       c.fillRect(tx - 3, ty - 8, tw + 6, 16);
       c.fillStyle = 'rgba(198,226,240,.94)';
@@ -632,7 +632,7 @@ export class HUD {
       stats.drawn++;
     }
 
-    /* ---- 玩家：固定在中心，箭头恒朝上（玩家朝上模式） ---- */
+    /* ---- player: fixed at centre, arrow always up (heading-up mode) ---- */
     c.save();
     c.translate(W / 2, H / 2);
     c.fillStyle = MAP_COLORS.friendly;
@@ -641,7 +641,7 @@ export class HUD {
     c.restore();
   }
 
-  /* ---------------- 反馈 ---------------- */
+  /* ---------------- Feedback ---------------- */
   hit(kill = false) {
     this.el.hitmarker.classList.remove('show');
     void this.el.hitmarker.offsetWidth;
@@ -651,13 +651,13 @@ export class HUD {
   }
 
   flash(alpha = 0.85) {
-    /* 4. 纯 CSS 合成层：只改 opacity（transform/opacity 由合成器处理），
-       不写 background、不读像素、不动 #grade 的渐变+滤镜。 */
+    /* 4. pure CSS compositor layer: only opacity changes (transform/opacity are handled by the compositor),
+       no background writes, no pixel reads, the #grade gradient+filter is untouched. */
     const w = this.el.whiteout;
     if (!w) return;
     w.style.transition = 'none';
     w.style.opacity = String(Math.min(1, Math.max(0, alpha)));
-    // 强制一次样式刷新后再启动过渡，保证从当前不透明度开始淡出
+    // force a style flush before starting the transition so the fade starts from the current opacity
     void w.offsetWidth;
     w.style.transition = 'opacity .5s linear';
     w.style.opacity = '0';
@@ -670,7 +670,7 @@ export class HUD {
   }
 
   say(text, who, dur = 3.4) {
-    this.el.subtitle.innerHTML = who ? `<b>${who}</b>：${text}` : text;
+    this.el.subtitle.innerHTML = who ? `<b>${who}</b>: ${text}` : text;
     this.el.subtitle.classList.add('on');
     this.subTimer = dur;
   }

@@ -1,10 +1,10 @@
 /* ============================================================
-   nav.js — 粗粒度导航网格 + A* 寻路
+   nav.js — coarse navigation grid + A* pathfinding
    ============================================================ */
 import { pointFree, losBlocked } from './geom.js';
 
 export class NavGrid {
-  /* 8 邻域方向表：静态常量，避免每次 findPath 重建数组 */
+  /* 8-neighbour direction table: static constant, not rebuilt on every findPath */
   static DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
   constructor(grid, bounds, cell = 1.5, inflate = 0.62) {
@@ -22,10 +22,10 @@ export class NavGrid {
         this.blocked[j * this.w + i] = pointFree(grid, x, z, inflate, 0, 1.75) ? 0 : 1;
       }
     }
-    /* open list 改用二叉堆：原先每次取最小 f 都要线性扫描整个 open 数组，
-       最坏 O(n) 次比较 × n 次弹出。节点规模不大时线性扫描勉强可用，
-       但掩体/追击路径会频繁重算，这里换成 O(log n) 的堆。
-       堆按索引存节点，键直接读 _f 表，因此不需要额外的键数组。 */
+    /* The open list is a binary heap. Previously every min-f pop linearly scanned the whole open array,
+       worst case O(n) comparisons × n pops. Tolerable for small graphs, but cover/chase
+       paths are recomputed often, so this is now an O(log n) heap.
+       The heap stores node indices and reads keys straight from _f, so no separate key array is needed. */
     this._heap = new Int32Array(this.w * this.h * 2 + 64);
     this._heapN = 0;
     this._came = new Int32Array(this.w * this.h);
@@ -37,10 +37,10 @@ export class NavGrid {
   }
   idx(i, j) { return j * this.w + i; }
 
-  /* ---- 二叉最小堆（键 = this._f[idx]） ---- */
+  /* ---- binary min-heap (key = this._f[idx]) ---- */
   _heapPush(idx) {
     const h = this._heap, f = this._f;
-    if (this._heapN >= h.length) return;      // 堆满则丢弃（有 maxNodes 兜底）
+    if (this._heapN >= h.length) return;      // drop when full (maxNodes is the backstop)
     let i = this._heapN++;
     h[i] = idx;
     while (i > 0) {
@@ -78,7 +78,7 @@ export class NavGrid {
     if (i < 0 || j < 0 || i >= this.w || j >= this.h) return true;
     return this.blocked[j * this.w + i] === 1;
   }
-  /** 找到距离目标最近的可通行格 */
+  /** Nearest walkable cell to the target */
   nearestFree(x, z, maxR = 14) {
     const c = this.cellOf(x, z);
     if (!this.isBlocked(c.i, c.j)) return c;
@@ -93,7 +93,7 @@ export class NavGrid {
     }
     return c;
   }
-  /** A*；返回世界坐标航点数组（省略起点） */
+  /** A*; returns world-space waypoints (start omitted) */
   findPath(ax, az, bx, bz, maxNodes = 5200) {
     const s = this.nearestFree(ax, az);
     const t = this.nearestFree(bx, bz);
@@ -106,12 +106,12 @@ export class NavGrid {
     f[si] = Math.hypot(t.i - s.i, t.j - s.j);
     this._heapPush(si);
     let found = false, visited = 0;
-    /* 方向表提到循环外，避免每次搜索重建（原先每次 findPath 都新建一个数组） */
+    /* direction table hoisted out of the loop (previously a new array per findPath) */
     const DIRS = NavGrid.DIRS;
     while (this._heapN > 0) {
       const cur = this._heapPop();
       if (cur === ti) { found = true; break; }
-      if (closed[cur] === ep) continue;      // 堆里可能存在重复项，弹出时判重
+      if (closed[cur] === ep) continue;      // the heap may hold duplicates; dedupe on pop
       closed[cur] = ep;
       if (++visited > maxNodes) break;
       const ci = cur % this.w, cj = (cur / this.w) | 0;
@@ -134,7 +134,7 @@ export class NavGrid {
       }
     }
     if (!found) return null;
-    // 回溯
+    // backtrack
     const raw = [];
     let cur = ti;
     while (cur !== si) {
@@ -147,7 +147,7 @@ export class NavGrid {
     raw.push({ x: bx, z: bz });
     return this.smooth(ax, az, raw);
   }
-  /** 拉绳平滑 */
+  /** string-pulling smoothing */
   smooth(sx, sz, pts) {
     const out = [];
     let cx = sx, cz = sz, i = 0;
@@ -176,7 +176,7 @@ export class NavGrid {
   }
 }
 
-/** 视线（世界坐标），复用 geom 的采样实现 */
+/** Line of sight (world space), reusing geom's sampling implementation */
 export function hasLOS(grid, ax, ay, az, bx, by, bz) {
   return !losBlocked(grid, ax, ay, az, bx, by, bz);
 }
