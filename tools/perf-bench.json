@@ -1,0 +1,53 @@
+{
+  "logic": [
+    {
+      "label": "idle-follow",
+      "ms": 29,
+      "medianMs": 29.7,
+      "usPerStep": 32.22
+    },
+    {
+      "label": "clear-order",
+      "ms": 31.6,
+      "medianMs": 33.3,
+      "usPerStep": 35.11
+    },
+    {
+      "label": "engage-9",
+      "ms": 56.8,
+      "medianMs": 61.8,
+      "usPerStep": 63.11
+    },
+    {
+      "label": "squad-firing",
+      "ms": 37.3,
+      "medianMs": 38.4,
+      "usPerStep": 41.44
+    },
+    {
+      "label": "hud-update-only",
+      "ms": 21,
+      "medianMs": 21.9,
+      "usPerStep": 23.33
+    }
+  ],
+  "draw": {
+    "calls": 91,
+    "callsMax": 244,
+    "triangles": 14534,
+    "trianglesMax": 18506,
+    "views": [
+      81,
+      244,
+      91,
+      106,
+      36,
+      17,
+      131,
+      23
+    ],
+    "programs": 32,
+    "geometries": 452,
+    "textures": 64
+  }
+}

@@ -393,8 +393,12 @@ export class Game {
         if (o.material) {
           const mats = Array.isArray(o.material) ? o.material : [o.material];
           mats.forEach((m) => {
-            for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap']) {
+            for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'clearcoatMap', 'clearcoatRoughnessMap']) {
               if (m[k] && m[k].dispose) m[k].dispose();
+            }
+            /* textures held by ShaderMaterial uniforms (light-shaft noise) are invisible to the slots above */
+            if (m.uniforms) {
+              for (const u of Object.values(m.uniforms)) if (u && u.value && u.value.isTexture) u.value.dispose();
             }
             m.dispose();
           });
