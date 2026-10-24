@@ -13,6 +13,38 @@ export class Screens {
     this.loadout = { ...DEFAULT_LOADOUT };
     this.buildLoadout();
     this.wire();
+    this.wireTitleKeys();
+  }
+
+  /* Title menu: ↑/↓ (or W/S) move between items, Enter/Space activate (native button behaviour), Home/End jump. */
+  wireTitleKeys() {
+    document.addEventListener('keydown', (e) => {
+      if (this.current !== 'title') return;
+      const items = [...document.querySelectorAll('#screen-title .tm-item')];
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement);
+      let next = -1;
+      if (e.code === 'ArrowDown' || e.code === 'KeyS') next = i < 0 ? 0 : (i + 1) % items.length;
+      else if (e.code === 'ArrowUp' || e.code === 'KeyW') next = i < 0 ? items.length - 1 : (i - 1 + items.length) % items.length;
+      else if (e.code === 'Home') next = 0;
+      else if (e.code === 'End') next = items.length - 1;
+      if (next < 0) return;
+      e.preventDefault();
+      items[next].focus();
+    });
+  }
+
+  /* operation card: last recorded result in this browser, if any */
+  refreshTitleCard() {
+    const el = $('#op-last');
+    if (!el) return;
+    let rec = null;
+    try { rec = JSON.parse(localStorage.getItem('sm.lastOperation') || 'null'); } catch (e) { rec = null; }
+    if (!rec || !rec.grade) { el.textContent = 'No operation on record'; return; }
+    const ago = Math.max(0, Date.now() - (rec.at || 0));
+    const h = Math.floor(ago / 3600000), d = Math.floor(h / 24);
+    const when = d >= 1 ? `${d} d ago` : h >= 1 ? `${h} h ago` : 'just now';
+    el.textContent = `Last: grade ${rec.grade} · ${rec.time} · ${rec.success ? 'complete' : 'aborted'} · ${when}`;
   }
 
   wire() {
@@ -175,6 +207,9 @@ export class Screens {
   }
 
   show(name) {
+    /* leaving a debrief for the title tears the mission down and brings the live port back */
+    if (name === 'title' && this.game.state === 'debrief') this.game.abort();
+    if (name === 'title') this.refreshTitleCard();
     this.hideAll();
     const el = $('#screen-' + name);
     if (el) el.classList.remove('hidden');

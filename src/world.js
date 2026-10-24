@@ -88,7 +88,12 @@ try {
 const SODIUM = 0xffa155;            // high-pressure sodium, ~2000 K
 const ENV_INTENSITY = 2.6;          // sky dome as indirect light
 const SKY_BG_INTENSITY = 1.0;       // sky dome as seen by the camera
-const FOG_HORIZON_MATCH = 1.0;      // fog colour = horizon radiance × this
+/* Fog converges to the sky's horizon colour so distance dissolves instead of meeting a line — but at
+   0.62 of it, not 1.0. At parity the far fog layer became the brightest thing in an open view (brighter
+   than the sky above it, which is physically impossible at night unless a lamp is inside the fog) and the
+   yard read as an overcast morning. Below parity the fog stays a scattering medium that is darker than the
+   glow above it, which is what a foggy night actually looks like away from the lamps. */
+const FOG_HORIZON_MATCH = 0.62;     // fog colour = horizon radiance × this
 const HEMI_INTENSITY = 0.35;
 const BOUNCE_INTENSITY = 0.06;      // per light, three of them
 const MOON_INTENSITY = 0.28;
@@ -565,11 +570,11 @@ export function buildWorld(scene, renderer) {
        rough; in standing water the coat is a flat mirror over the grain. The mask itself is assigned once
        the puddle positions are known (see "Wetness" below). */
     asphalt: new THREE.MeshPhysicalMaterial({
-      map: asphalt.map, normalMap: asphalt.normalMap, normalScale: new THREE.Vector2(0.55, 0.55),
+      map: asphalt.map, normalMap: asphalt.normalMap, normalScale: new THREE.Vector2(0.42, 0.42),
       color: 0xffffff, roughness: 1, metalness: 0,
       /* coat roughness = 0.5 × mask.g: ~0.02 in standing water (a mirror), ~0.25 on damp ground, where the lamp
          reflections become soft streaks that stretch towards the viewer at grazing angles */
-      clearcoat: 1, clearcoatRoughness: 0.5,
+      clearcoat: 1, clearcoatRoughness: 0.6,
     }),
     /* harbour water: ior 1.33 (F0 ≈ 0.02), smooth, a static ripple normal so lamp reflections break up */
     water: new THREE.MeshPhysicalMaterial({

@@ -155,32 +155,59 @@
 
   <!-- ===================== SCREENS ===================== -->
   <div id="screen-title" class="screen">
+    <!-- fallback backdrop until the live port (attract mode) has rendered its first frame -->
     <div class="title-bg"></div>
-    <div class="title-content">
-      <div class="brand-line">
-        <span class="brand-mark">◈</span>
-        <span>MERIDIAN PORT AUTHORITY · TACTICAL UNIT</span>
+    <div class="title-scrim"></div>
+    <div class="title-layout">
+      <div class="title-content">
+        <div class="brand-line">
+          <span class="brand-mark" aria-hidden="true">◈</span>
+          <span>MERIDIAN PORT AUTHORITY · TACTICAL UNIT</span>
+        </div>
+        <h1>
+          <span class="t-main">The Silent Meridian</span>
+          <span class="t-sub">Operation 01 · Silent Berth</span>
+        </h1>
+        <p class="blurb">
+          23:41. Sea fog has closed Berth 3. Dispatch is dark, a cargo manifest is missing,
+          and armed men are moving through the bays. You lead a four-man Port Security team.
+          On this meridian you look first, and order second.
+        </p>
+        <nav class="title-menu" aria-label="Main menu">
+          <button type="button" class="tm-item primary" id="btn-quick-deploy" data-action="deploy">
+            <span class="tm-idx" aria-hidden="true">01</span>
+            <span class="tm-text"><span class="tm-label">Deploy</span><span class="tm-note">Standard loadout, straight into the port</span></span>
+          </button>
+          <button type="button" class="tm-item" id="btn-briefing" data-action="screen" data-screen="briefing">
+            <span class="tm-idx" aria-hidden="true">02</span>
+            <span class="tm-text"><span class="tm-label">Briefing</span><span class="tm-note">Situation, objectives, rules of engagement</span></span>
+          </button>
+          <button type="button" class="tm-item" id="btn-loadout" data-action="screen" data-screen="loadout">
+            <span class="tm-idx" aria-hidden="true">03</span>
+            <span class="tm-text"><span class="tm-label">Loadout</span><span class="tm-note">Weapons, gadget and armour</span></span>
+          </button>
+          <button type="button" class="tm-item" id="btn-controls" data-action="help-open">
+            <span class="tm-idx" aria-hidden="true">04</span>
+            <span class="tm-text"><span class="tm-label">Controls</span><span class="tm-note">Movement, orders and the tactical map</span></span>
+          </button>
+        </nav>
       </div>
-      <h1>
-        <span class="t-main">The Silent Meridian</span>
-        <span class="t-sub">Operation 01 · Silent Berth</span>
-      </h1>
-      <div class="subtitle">Tactical port security simulation</div>
-      <div class="title-divider"></div>
-      <p class="blurb">
-        23:41. Sea fog has closed Berth 3. Dispatch is dark, a cargo manifest is missing,
-        and armed men are moving through the bays. You lead a four-man Port Security team.
-        On this meridian you look first, and order second.
-      </p>
-      <div class="title-actions">
-        <button class="btn primary" id="btn-briefing" data-action="screen" data-screen="briefing">Briefing</button>
-        <button class="btn" id="btn-loadout" data-action="screen" data-screen="loadout">Loadout</button>
-        <button class="btn" id="btn-controls" data-action="help-open">Controls</button>
-      </div>
-      <div class="title-foot">
-        <span>Fictional port · all agencies and brands invented</span>
-        <span id="build-tag">BUILD 1.1.0 · canvas/WebGL</span>
-      </div>
+      <aside class="op-card" aria-label="Operation summary">
+        <div class="op-head"><span class="op-k">Operation</span><span class="op-v">01 · Silent Berth</span></div>
+        <dl class="op-list">
+          <div><dt>Location</dt><dd>Meridian Port · Berth 3</dd></div>
+          <div><dt>Local time</dt><dd>23:41</dd></div>
+          <div><dt>Conditions</dt><dd>Sea fog · vis 46 m</dd></div>
+          <div><dt>Hostiles</dt><dd>Unknown · callsign EGRET</dd></div>
+          <div><dt>Civilians</dt><dd>Night crew, 4 unaccounted</dd></div>
+        </dl>
+        <div class="op-last" id="op-last" role="status" aria-live="polite">No operation on record</div>
+      </aside>
+    </div>
+    <div class="title-foot">
+      <span class="title-keys"><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Enter</kbd> confirm</span>
+      <span>Fictional port · all agencies and brands invented</span>
+      <span id="build-tag">BUILD 1.1.0 · canvas/WebGL</span>
     </div>
   </div>
 

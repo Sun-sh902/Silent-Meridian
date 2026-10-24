@@ -91,7 +91,9 @@ export function asphaltSet() {
   // aggregate: small stones, lighter and raised
   for (let i = 0; i < 26000; i++) {
     const cx = rand() * S, cy = rand() * S, r = 0.8 + rand() * rand() * 3.2, v = 62 + rand() * 34, a = 0.25 + rand() * 0.35;
-    const h = 0.18 + rand() * 0.25;
+    /* stone relief is subtle on purpose: a strong height field turns every aggregate facet into its own
+       specular point under the clearcoat, and the wet road reads as glitter instead of a film of water */
+    const h = 0.09 + rand() * 0.14;
     disc(cx, cy, r * 1.2, (k, t) => {
       if (t < 0.7) col[k] += (v - col[k]) * a;
       hgt[k] = Math.min(1, hgt[k] + h * (1 - t));
@@ -131,7 +133,7 @@ export function asphaltSet() {
   const map = toTex(c);
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
   map.anisotropy = 8;
-  const normalMap = dataTex(normalFromHeight(hc, 1.6));
+  const normalMap = dataTex(normalFromHeight(hc, 1.05));
   normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
   normalMap.anisotropy = 8;
   return { map, normalMap };
@@ -417,11 +419,13 @@ export function containerEndSet() {
 export function lineTexture() {
   const W = 64, H = 1024, c = mkCanvas(W, H), g = c.getContext('2d');
   g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(226,224,214,.92)'; g.fillRect(3, 0, W - 6, H);
+  /* worn thermoplastic, not fresh paint: sRGB 178 ≈ 0.44 linear. At 226 the stripe clipped to white
+     wherever a lamp fell on it — the brightest thing in frame after the lamp heads themselves. */
+  g.fillStyle = 'rgba(178,176,166,.90)'; g.fillRect(3, 0, W - 6, H);
   g.globalCompositeOperation = 'destination-out';
   for (let i = 0; i < 1400; i++) {
     const x = rand() * W, y = rand() * H, r = 0.5 + rand() * 3;
-    g.fillStyle = `rgba(0,0,0,${0.3 + rand() * 0.7})`; g.fillRect(x, y, r, r);
+    g.fillStyle = `rgba(0,0,0,${0.18 + rand() * 0.5})`; g.fillRect(x, y, r, r);
   }
   for (let i = 0; i < 9; i++) {
     const y = rand() * H, len = 20 + rand() * 120;
@@ -431,7 +435,7 @@ export function lineTexture() {
   }
   g.globalCompositeOperation = 'source-over';
   for (let i = 0; i < 300; i++) {
-    g.fillStyle = `rgba(40,38,34,${rand() * 0.35})`;
+    g.fillStyle = `rgba(40,38,34,${rand() * 0.22})`;
     g.fillRect(rand() * W, rand() * H, 1 + rand() * 4, 1 + rand() * 10);
   }
   const t = toTex(c); t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;

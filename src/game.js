@@ -17,6 +17,7 @@ import { watchResize, canvasDpr } from './canvasfit.js';
 import { feel, telemetry } from './feel.js';
 import { TuningPanel } from './tuning.js';
 import { Post } from './post.js';
+import { AttractCamera } from './attract.js';
 import { TUNING, LINES, DIRECTIONS, ORDER_NAMES, COMMS } from './data.js';
 
 export class Game {
@@ -68,6 +69,17 @@ export class Game {
     this.screens = new Screens(this);
     this.tuning = new TuningPanel(this);   // feel tuning panel (P)
     this.screens.show('title');
+    /* Live world behind the title (attract mode), except in QA/test entry points that deploy straight away. */
+    this.reducedMotion = false;
+    try {
+      const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this.reducedMotion = mq.matches;
+      if (mq.addEventListener) mq.addEventListener('change', (e) => { this.reducedMotion = e.matches; });
+    } catch (e) { /* no matchMedia: motion stays on */ }
+    let qa = false;
+    try { const q = new URLSearchParams(location.search); qa = q.has('deploy') || q.has('test') || q.has('noattract'); } catch (e) { /* default */ }
+    this.attractEnabled = !qa;
+    if (this.attractEnabled) setTimeout(() => this.startAttract(), 30);   // after the title has painted
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.canvas;
     });
@@ -213,6 +225,14 @@ export class Game {
      Deploy
      ============================================================ */
   deploy(loadout) {
+    /* Adopt the attract world if the title was showing it: no rebuild, no cut. The camera then glides from the
+       title view into the player's eyes (see updateIntro). Detach it first so disposeMission leaves it alone. */
+    const adopt = this.attract ? { scene: this.scene, world: this.world } : null;
+    const fromPose = adopt && !this.reducedMotion && !this.testMode
+      ? { pos: this.camera.position.clone(), quat: this.camera.quaternion.clone(), fov: this.camera.fov } : null;
+    this.attract = null;
+    document.body.classList.remove('attract-live');
+    if (adopt) { this.scene = null; this.world = null; }
     this.disposeMission();
     /* bump the epoch: even callbacks already queued before clearTimers()
        bail out on the epoch mismatch (see later()). */
@@ -221,9 +241,10 @@ export class Game {
     this.audio.resume();
     this.loadout = loadout || this.loadout;
 
-    this.scene = new THREE.Scene();
-    this.world = buildWorld(this.scene, this.renderer);
+    this.scene = adopt ? adopt.scene : new THREE.Scene();
+    this.world = adopt ? adopt.world : buildWorld(this.scene, this.renderer);
     this.world.setPostGlow(!!this.post);
+    this.intro = fromPose ? { ...fromPose, t: 0, start: performance.now() } : null;
     this.nav = new NavGrid(this.world.grid, { x0: -74, x1: 74, z0: -66, z1: 52 }, 1.5, 0.62);
     this.effects = new Effects(this.scene);
     this.projectiles = [];
@@ -345,6 +366,7 @@ export class Game {
     this.installMapDebug();
     this.state = 'play';
     this.screens.showGame();
+    document.getElementById('hud').classList.toggle('intro', !!this.intro);
     this.requestLock();
     this.setBeats();
     this.log('Operation live — Meridian Port, Berth 3', 'good');
@@ -428,6 +450,46 @@ export class Game {
     this.state = 'menu';
     if (document.exitPointerLock) document.exitPointerLock();
     this.screens.hideGame();
+    this.startAttract();
+  }
+
+  /* ---------------- Attract mode: the live port behind the title ---------------- */
+  startAttract() {
+    if (!this.attractEnabled || this.attract || this.state === 'play') return;
+    if (this.scene) this.disposeMission();          // e.g. coming back from a debrief
+    this.scene = new THREE.Scene();
+    this.world = buildWorld(this.scene, this.renderer);
+    this.world.setPostGlow(!!this.post);
+    this.attract = new AttractCamera();
+    document.body.classList.add('attract-live');
+  }
+
+  /* Title → play: blend the camera from the title shot to the player's view over 1.6 s, ease in-out.
+     Timed on the wall clock, not the clamped frame dt, so a slow machine doesn't stretch it (presentation only;
+     never active under ?test=1 or reduced motion). The player can already move; the weapon appears near the end. */
+  updateIntro() {
+    const it = this.intro;
+    if (!it) return;
+    it.t = Math.min(1, (performance.now() - it.start) / 1600);
+    const e = it.t * it.t * (3 - 2 * it.t);
+    this.camera.position.lerpVectors(it.pos, this.camera.position, e);
+    this.camera.quaternion.slerpQuaternions(it.quat, this.camera.quaternion, e);
+    this.camera.fov = it.fov + (this.camera.fov - it.fov) * e;
+    this.camera.updateProjectionMatrix();
+    if (this.viewmodel) this.viewmodel.root.visible = e > 0.85;
+    if (it.t >= 1) {
+      this.intro = null;
+      if (this.viewmodel) this.viewmodel.root.visible = true;
+      document.getElementById('hud').classList.remove('intro');
+    }
+  }
+
+  /* menus and debrief: the world without HUD or weapon, still through post-processing */
+  renderBackdrop() {
+    if (this.post) this.post.begin();
+    this.renderer.autoClear = true;
+    this.renderer.render(this.scene, this.camera);
+    if (this.post) this.post.end(this.missionTime || 0);
   }
 
   /* ============================================================
@@ -921,6 +983,10 @@ export class Game {
     this.state = 'debrief';
     if (document.exitPointerLock) document.exitPointerLock();
     const res = this.buildResult(success);
+    /* per-browser record for the title screen's operation card; storage may be unavailable (private mode) */
+    try {
+      localStorage.setItem('sm.lastOperation', JSON.stringify({ success, grade: res.grade, time: res.time, at: Date.now() }));
+    } catch (e) { /* no storage: the card just shows no record */ }
     this.screens.showDebrief(res);
     this.screens.show('debrief');
     this.screens.hideGame();
@@ -1194,7 +1260,11 @@ export class Game {
     const rawDt = Math.max(0, Math.min(0.05, (now - this.last) / 1000));
     this.last = now;
     if (this.state !== 'play' || !this.scene) {
-      if (this.scene && this.renderer) this.renderer.render(this.scene, this.camera);
+      if (this.attract) {
+        this.attract.apply(this.camera, rawDt, this.reducedMotion);
+        this.world.update(rawDt, this.camera.position);
+      }
+      if (this.scene && this.renderer) this.renderBackdrop();
       return;
     }
     /* test mode: advance() is called externally at a fixed step, reproducible; normal play unaffected */
@@ -1232,6 +1302,7 @@ export class Game {
       console.warn('[SILENT MERIDIAN] slow logic frame: ' + logicMs.toFixed(1) + 'ms');
     }
 
+    this.updateIntro();
     this.renderFrame();
     this.perf.renderMs = performance.now() - t1;
 

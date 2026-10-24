@@ -430,6 +430,7 @@ Everything is procedural and offline; the look comes from physics first, effects
 | Albedo and materials | Dielectric asphalt/water/paint (metalness 0), physically plausible albedos, a wet-asphalt clearcoat driven by a world-space wetness mask, corrugated containers with worn door ends | `src/world.js`, `src/textures.js` |
 | Light | One sky gradient feeds the environment map, the visible sky and the fog's far colour; hemisphere split, upward sodium bounce, wide-penumbra lamp spotlights with inverse-square falloff, low-decay far fills, a dim moon key; baked sky visibility indoors | `src/world.js` |
 | Atmosphere | Fog density fixed for gameplay, colour graded by distance, thinning with height so tall structures rise out of the sea-fog layer; soft light shafts and forward-scattering motes | `src/world.js` |
+| Title screen | The menu sits over the live port: a slow camera loop through the fog (one composed shot under reduced motion). Deploy adopts that world and glides the camera into the player's eyes — no load, no cut. Arrow keys move through the menu; the operation card shows this browser's last result | `src/attract.js`, `src/game.js` |
 | First-person weapon | Lit by a camera-space mirror of the world lights (lamps, sky, environment), so it warms under a lamp and darkens in shadow | `src/viewmodel.js` |
 | Post | Half-float scene target, wide low-intensity bloom, one composite pass (ACES, a single grade curve, mild vignette, dither, grain, chromatic aberration, FXAA-style edge AA). Off with `?nopost` | `src/post.js` |
 
@@ -448,6 +449,7 @@ Append query parameters to the address for verification:
 `&tacmap=1` open the tactical map · `&screen=briefing|loadout` open a given screen
 `&debrief=1` show a sample debrief · `&novm=1` hide the first-person weapon
 `&nopost` disable post-processing (renders straight to the canvas, CSS grade overlays back on)
+`&noattract` plain title backdrop instead of the live port (QA entry points with `deploy`/`test` skip it automatically)
 
 ## Self-checks
 
@@ -534,15 +536,17 @@ noise — the key to a credible A/B comparison. Each scenario runs several round
 >
 > | Scenario | Before | After | Change |
 > | --- | --- | --- | --- |
-> | logic idle-follow | 118.3 ms | **28.6 ms** | **-75.8%** |
-> | logic clear-order | 121.5 ms | **30.6 ms** | **-74.8%** |
-> | logic engage-9 (9-way firefight) | 141.3 ms | **52.2 ms** | **-63.1%** |
-> | logic squad-firing | 118.0 ms | **35.8 ms** | **-69.7%** |
-> | **of which HUD alone** | **100.7 ms** | **21.2 ms** | **-78.9%** |
-> | main-scene draw calls (median) | 119 | **98** | -17.6% |
-> | main-scene draw calls (peak) | 275 | **254** | -7.6% |
-> | geometries | 492 | **425** | -13.6% |
-> | triangles (median) | 11992 | 12996 | +8.4% (traded against draw calls, reference only) |
+> | logic idle-follow | 118.3 ms | **32.1 ms** | **-72.9%** |
+> | logic clear-order | 121.5 ms | **35.1 ms** | **-71.1%** |
+> | logic engage-9 (9-way firefight) | 141.3 ms | **60.8 ms** | **-57.0%** |
+> | logic squad-firing | 118.0 ms | **42.1 ms** | **-64.3%** |
+> | **of which HUD alone** | **100.7 ms** | **23.4 ms** | **-76.8%** |
+> | main-scene draw calls (median) | 119 | **93** | -21.8% |
+> | main-scene draw calls (peak) | 275 | **244** | -11.3% |
+> | geometries | 492 | **452** | -8.1% |
+> | triangles (median) | 11992 | 14558 | +21.4% (traded against draw calls, reference only) |
+> | shader programs | 16 | 32 | +100% (post pass + patched fog chunks) |
+> | textures | 46 | 64 | +39% (wetness, normal, container, paint maps) |
 > | DOM mutations per frame (perf-probe) | 27.3 | **2.6** | -90% |
 > | layout reads per frame (perf-probe) | 55.2 | **3** | -95% |
 > | net textures per redeploy | +8 | **0** | constant 37 across 10 deploys |
@@ -555,6 +559,13 @@ noise — the key to a credible A/B comparison. Each scenario runs several round
 > per-frame HUD DOM/layout cost was the single biggest logic cost. With that down to 21.2 ms,
 > the remaining ~7 ms is the actual game logic.
 >
+> **Visual-overhaul round.** The numbers above are re-measured on the current tree (the overhaul added a
+> bloom/composite pass, a patched fog shader, `MeshPhysicalMaterial` wet ground and a viewmodel that mirrors
+> the world lights). Logic cost did not move — this is a rendering change. What it did cost: shader programs
+> doubled (16 → 32) and textures grew 39% (46 → 64), both from the new passes and material maps; the full
+> suite went from 191 s to 282 s, almost entirely post-processing under swiftshader, which is not a logic
+> regression and should not be profiled as one.
+
 > **The triangle increase is accepted on purpose**: merging 46 puddles into one mesh loses per-object frustum culling,
 > so up to 644 triangles are submitted every frame; in exchange up to 46 transparent draw calls become 1.
 > Draw calls are scarce (each carries state validation and uniform uploads),
