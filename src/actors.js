@@ -14,19 +14,27 @@ const rng = makeRng(4242);
 /* ============================================================
    Shared materials
    ============================================================ */
+/* Cloth is MeshPhysicalMaterial with sheen: woven fabric back-scatters at grazing angles, which is what makes a
+   silhouette read as cloth rather than painted plastic under a single sodium lamp.
+   The old emissive terms on cloth (a faint self-glow so characters stayed visible in the crushed-black frame)
+   are gone — the lighting now carries them. The retroreflective tape (`reflect`) keeps its emissive: it is a
+   deliberate identification cue, and real retroreflective tape returns the weapon light almost straight back. */
+const cloth = (color, roughness, sheenColor) => new THREE.MeshPhysicalMaterial({
+  color, roughness, metalness: 0, sheen: 0.6, sheenRoughness: 0.8, sheenColor,
+});
 export const MAT = {
-  squadUniform: new THREE.MeshStandardMaterial({ color: 0x36506e, emissive: 0x0c141d, emissiveIntensity: 1, roughness: 0.85, metalness: 0.06 }),
-  squadVest:    new THREE.MeshStandardMaterial({ color: 0x222f40, emissive: 0x090e14, emissiveIntensity: 1, roughness: 0.7, metalness: 0.12 }),
-  squadHelmet:  new THREE.MeshStandardMaterial({ color: 0x2a3c50, emissive: 0x0a1119, emissiveIntensity: 1, roughness: 0.55, metalness: 0.25 }),
+  squadUniform: cloth(0x36506e, 0.85, 0x5a7090),
+  squadVest:    cloth(0x222f40, 0.75, 0x3a4a60),
+  squadHelmet:  new THREE.MeshStandardMaterial({ color: 0x2a3c50, roughness: 0.5, metalness: 0 }),
   reflect:      new THREE.MeshStandardMaterial({ color: 0x8fe8ff, emissive: 0x2f7f96, emissiveIntensity: 0.85, roughness: 0.4 }),
-  suspectCloth: new THREE.MeshStandardMaterial({ color: 0x53483c, emissive: 0x100d09, emissiveIntensity: 1, roughness: 0.92, metalness: 0.03 }),
-  suspectDark:  new THREE.MeshStandardMaterial({ color: 0x2a2621, emissive: 0x0a0908, emissiveIntensity: 1, roughness: 0.9, metalness: 0.04 }),
-  civCloth:     new THREE.MeshStandardMaterial({ color: 0x54666f, emissive: 0x0c1114, emissiveIntensity: 1, roughness: 0.9, metalness: 0.03 }),
-  hiVis:        new THREE.MeshStandardMaterial({ color: 0xd7a63c, emissive: 0x3a2a08, emissiveIntensity: 0.5, roughness: 0.75 }),
-  skin:         new THREE.MeshStandardMaterial({ color: 0x8a6a55, roughness: 0.85, metalness: 0.02 }),
+  suspectCloth: cloth(0x53483c, 0.92, 0x7a6a58),
+  suspectDark:  cloth(0x2a2621, 0.9, 0x4a443c),
+  civCloth:     cloth(0x54666f, 0.9, 0x7a8c94),
+  hiVis:        cloth(0xd7a63c, 0.75, 0xf0c060),
+  skin:         new THREE.MeshStandardMaterial({ color: 0x8a6a55, roughness: 0.6, metalness: 0 }),
   gun:          new THREE.MeshStandardMaterial({ color: 0x181c20, roughness: 0.42, metalness: 0.72 }),
-  gunWood:      new THREE.MeshStandardMaterial({ color: 0x3d3021, roughness: 0.7, metalness: 0.1 }),
-  boot:         new THREE.MeshStandardMaterial({ color: 0x121519, roughness: 0.8, metalness: 0.1 }),
+  gunWood:      new THREE.MeshStandardMaterial({ color: 0x3d3021, roughness: 0.7, metalness: 0 }),
+  boot:         new THREE.MeshStandardMaterial({ color: 0x121519, roughness: 0.8, metalness: 0 }),
 };
 
 function mkBox(w, h, d, mat) {

@@ -1,9 +1,9 @@
 {
   "v": "1.1.0",
-  "hash": "0c1aef32813e",
-  "at": "2026-10-24T02:24:58.655Z",
+  "hash": "aab1671a902c",
+  "at": "2026-10-24T03:01:10.534Z",
   "inputs": {
-    "src/actors.js": "3c6adc70f747",
+    "src/actors.js": "adfef9e5e051",
     "src/audio.js": "06f2eb24e64a",
     "src/canvasfit.js": "551c5fc6821a",
     "src/combat.js": "36901558a585",
@@ -18,10 +18,10 @@
     "src/player.js": "247786cdc7db",
     "src/screens.js": "88423ae9c3a9",
     "src/tacmap.js": "3ddcb0894fc7",
-    "src/textures.js": "33a5f97777c3",
+    "src/textures.js": "d641165e3ac4",
     "src/tuning.js": "99c05b1280b8",
     "src/viewmodel.js": "1c38d5900664",
-    "src/world.js": "b0c7e1b2af50",
+    "src/world.js": "a363e9529106",
     "index.html": "9ff7f09b3b74",
     "styles/ui.css": "ddee8de9b74d"
   }

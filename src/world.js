@@ -39,6 +39,7 @@ const BOUNCE_INTENSITY = 0.06;      // per light, three of them
 const MOON_INTENSITY = 0.28;
 const LAMP_INTENSITY = 900;         // candela-scale; pool centre irradiance ≈ I / h² ≈ 11
 const FAR_FILL_INTENSITY = 7;
+const GROUND_SIZE = 400;
 
 /* Albedo correction per batch bucket.
    The vertex colours were authored against the old rig, where the concrete texture itself was ~0.017 linear
@@ -47,7 +48,7 @@ const FAR_FILL_INTENSITY = 7;
    The concrete map is now a near-white detail map (mean ~0.7) and the vertex colour carries the albedo,
    lifted here in linear space by one documented factor per bucket instead of editing ~80 literals.
    This is a material property, not exposure: lights and exposure are unchanged by it. */
-const ALBEDO_LIFT = { concrete: 3.2, metal: 1.8, paint: 1.5 };
+const ALBEDO_LIFT = { concrete: 3.2, metal: 1.8, paint: 1.5, container: 1.5, containerEnd: 1.5 };
 const ALBEDO_MAX = 0.6;
 
 class Batcher {
@@ -65,13 +66,20 @@ class Batcher {
     return o;
   }
   /* sky: baked sky visibility 0..1 for this piece (1 = open sky, ~0.2 = inside a building).
-     It scales only indirect light (hemisphere + environment), see patchSkyVisibility(). */
-  add(name, geo, matrix, color, sky = 1) {
+     It scales only indirect light (hemisphere + environment), see patchSkyVisibility().
+     opts.uv:    'unit'  (default) the geometry's own 0..1 per-face UVs
+                 'world' UVs in world metres, box-projected by face normal (continuous across adjacent pieces)
+                 'local' UVs in metres of the box's own dimensions (opts.dims = [sx, sy, sz]); v = height from the box bottom
+     opts.ends:  bucket for faces whose local normal is ±X (container door ends); other faces go to `name` */
+  add(name, geo, matrix, color, sky = 1, opts) {
     const src = nonIndexed(geo);
     const p = src.attributes.position.array;
     const n = src.attributes.normal.array;
     const u = src.attributes.uv ? src.attributes.uv.array : null;
-    const o = this._b(name);
+    const uvMode = (opts && opts.uv) || 'unit';
+    const dims = opts && opts.dims;
+    const main = this._b(name);
+    const ends = opts && opts.ends ? this._b(opts.ends) : null;
     /* reused temporaries: add() used to allocate Matrix3 + 2×Vector3 + Color on every call */
     const nm = this._nm.getNormalMatrix(matrix);
     const v = this._v, vn = this._vn, c = this._c.set(color);
@@ -79,19 +87,30 @@ class Batcher {
     if (lift !== 1) {
       c.r = Math.min(ALBEDO_MAX, c.r * lift); c.g = Math.min(ALBEDO_MAX, c.g * lift); c.b = Math.min(ALBEDO_MAX, c.b * lift);
     }
-    for (let i = 0; i < p.length; i += 3) {
-      v.set(p[i], p[i + 1], p[i + 2]).applyMatrix4(matrix);
+    for (let i = 0, k = 0; i < p.length; i += 3, k += 2) {
+      const lx = p[i], ly = p[i + 1], lz = p[i + 2];
+      const ax = Math.abs(n[i]), ay = Math.abs(n[i + 1]), az = Math.abs(n[i + 2]);
+      const o = ends && ax > ay && ax > az ? ends : main;
+      v.set(lx, ly, lz).applyMatrix4(matrix);
       vn.set(n[i], n[i + 1], n[i + 2]).applyMatrix3(nm).normalize();
       o.pos.push(v.x, v.y, v.z);
       o.nor.push(vn.x, vn.y, vn.z);
       o.col.push(c.r, c.g, c.b);
       o.sky.push(sky);
-    }
-    /* not o.uv.push(...u): spreading a long u blows the stack, and per-element push is faster anyway */
-    if (u) {
-      for (let i = 0; i < u.length; i++) o.uv.push(u[i]);
-    } else {
-      for (let i = 0; i < p.length / 3; i++) o.uv.push(0, 0);
+      if (uvMode === 'world') {
+        const wx = Math.abs(vn.x), wy = Math.abs(vn.y), wz = Math.abs(vn.z);
+        if (wx >= wy && wx >= wz) o.uv.push(v.z, v.y);
+        else if (wy >= wz) o.uv.push(v.x, v.z);
+        else o.uv.push(v.x, v.y);
+      } else if (uvMode === 'local' && dims) {
+        if (ax >= ay && ax >= az) o.uv.push((lz + 0.5) * dims[2], (ly + 0.5) * dims[1]);
+        else if (ay >= az) o.uv.push((lx + 0.5) * dims[0], (lz + 0.5) * dims[2]);
+        else o.uv.push((lx + 0.5) * dims[0], (ly + 0.5) * dims[1]);
+      } else if (u) {
+        o.uv.push(u[k], u[k + 1]);
+      } else {
+        o.uv.push(0, 0);
+      }
     }
   }
   build(materials, parent, castShadow = true, receiveShadow = true) {
@@ -132,7 +151,42 @@ function patchSkyVisibility(mat) {
   };
 }
 
+/* Wet ground: water darkens the base layer (light that enters the film is absorbed by the wet asphalt instead of
+   scattering back out), and grime (tyre tracks, oil) darkens it further. Both read from the wetness mask that
+   already drives clearcoat (.r) and roughness (.g); .b is grime. */
+function patchWetGround(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', [
+      '#include <map_fragment>',
+      '#ifdef USE_CLEARCOATMAP',
+      '  vec3 wetMask = texture2D( clearcoatMap, vClearcoatMapUv ).rgb;',
+      '  diffuseColor.rgb *= mix( 1.0, 0.45, wetMask.r ) * mix( 1.0, 0.55, wetMask.b );',
+      '#endif',
+    ].join('\n'));
+  };
+}
+
+/* merge indexed plane geometries (position/normal/uv) into one */
+function mergePlanes(list) {
+  let nv = 0, ni = 0;
+  for (const g of list) { nv += g.attributes.position.count; ni += g.index.count; }
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni);
+  let ov = 0, oi = 0;
+  for (const g of list) {
+    pos.set(g.attributes.position.array, ov * 3); nor.set(g.attributes.normal.array, ov * 3); uv.set(g.attributes.uv.array, ov * 2);
+    const ia = g.index.array; for (let i = 0; i < ia.length; i++) idx[oi + i] = ia[i] + ov;
+    ov += g.attributes.position.count; oi += ia.length;
+  }
+  const m = new THREE.BufferGeometry();
+  m.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  m.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  m.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  m.setIndex(new THREE.BufferAttribute(idx, 1));
+  return m;
+}
+
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const UV_WORLD = { uv: 'world' };
 const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 14);
 const UNIT_CYL_LO = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
 
@@ -162,7 +216,7 @@ class Level {
       this._v.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
       this._s.set(Math.abs(x1 - x0) || 0.02, Math.abs(y1 - y0) || 0.02, Math.abs(z1 - z0) || 0.02);
       this._m.compose(this._v, new THREE.Quaternion(), this._s);
-      this.batch.add(bucket, UNIT_BOX, this._m, color, this.sky);
+      this.batch.add(bucket, UNIT_BOX, this._m, color, this.sky, bucket === 'concrete' ? UV_WORLD : undefined);
     }
     if (o.collide !== false) {
       this.grid.add({
@@ -183,7 +237,8 @@ class Level {
     this._v.set(cx, cy, cz);
     this._s.set(sx, sy, sz);
     this._m.compose(this._v, this._q, this._s);
-    this.batch.add(bucket, UNIT_BOX, this._m, color, this.sky);
+    this.batch.add(bucket, UNIT_BOX, this._m, color, this.sky,
+      bucket === 'container' ? { uv: 'local', dims: [sx, sy, sz], ends: 'containerEnd' } : undefined);
     if (o.collide !== false) {
       const c = Math.abs(Math.cos(ry)), s = Math.abs(Math.sin(ry));
       const ex = (sx * c + sz * s) / 2;
@@ -395,8 +450,11 @@ export function buildWorld(scene, renderer) {
   scene.backgroundIntensity = SKY_BG_INTENSITY;
 
   /* ---------------- Materials ---------------- */
-  const asphalt = TX.asphaltTexture();
-  asphalt.wrapS = asphalt.wrapT = THREE.RepeatWrapping;
+  const asphalt = TX.asphaltSet();
+  /* ground plane is 400 m with 0..1 UVs: 100 repeats = one 4 m tile */
+  asphalt.map.repeat.setScalar(GROUND_SIZE / TX.ASPHALT_TILE_M);
+  asphalt.normalMap.repeat.copy(asphalt.map.repeat);
+  const side = TX.containerSideSet(), end = TX.containerEndSet();
   /* Physics pass: asphalt, water and paint are dielectrics (metalness 0, F0 ≈ 0.04 / 0.02).
      Their specular now comes from Fresnel on a smooth-ish surface reflecting the sky dome and the lamps —
      weak head-on, strong at grazing angles, which is exactly how wet ground behaves — instead of from
@@ -404,11 +462,21 @@ export function buildWorld(scene, renderer) {
      "metal" is mostly painted steel (racking, roofs, crane): paint over steel is a dielectric too;
      a small metalness keeps a hint of the bare edges and galvanising. */
   const mats = {
-    asphalt: new THREE.MeshStandardMaterial({
-      map: asphalt, color: 0xffffff, roughness: 0.5, metalness: 0,
+    /* Wet asphalt: a dielectric base (grain normal map, roughness from the wetness mask) under a clearcoat
+       water film whose strength is the same mask. Where the mask is dry the coat vanishes and the asphalt is
+       rough; in standing water the coat is a flat mirror over the grain. The mask itself is assigned once
+       the puddle positions are known (see "Wetness" below). */
+    asphalt: new THREE.MeshPhysicalMaterial({
+      map: asphalt.map, normalMap: asphalt.normalMap, normalScale: new THREE.Vector2(0.55, 0.55),
+      color: 0xffffff, roughness: 1, metalness: 0,
+      /* coat roughness = 0.5 × mask.g: ~0.02 in standing water (a mirror), ~0.25 on damp ground, where the lamp
+         reflections become soft streaks that stretch towards the viewer at grazing angles */
+      clearcoat: 1, clearcoatRoughness: 0.5,
     }),
-    water: new THREE.MeshStandardMaterial({
-      color: 0x0a0f12, roughness: 0.12, metalness: 0,
+    /* harbour water: ior 1.33 (F0 ≈ 0.02), smooth, a static ripple normal so lamp reflections break up */
+    water: new THREE.MeshPhysicalMaterial({
+      color: 0x080c0f, roughness: 0.07, metalness: 0, ior: 1.33,
+      normalMap: TX.rippleNormal(), normalScale: new THREE.Vector2(0.35, 0.35),
     }),
     concrete: new THREE.MeshStandardMaterial({
       map: TX.concreteTexture(), vertexColors: true, roughness: 0.85, metalness: 0,
@@ -419,9 +487,18 @@ export function buildWorld(scene, renderer) {
     paint: new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.6, metalness: 0,
     }),
-    glass: new THREE.MeshStandardMaterial({
-      color: 0x9fd4e2, transparent: true, opacity: 0.16, roughness: 0.06,
-      metalness: 0.35, side: THREE.DoubleSide, envMapIntensity: 1.6, depthWrite: false,
+    /* containers: painted corrugated steel, long sides and door ends with their own detail and normal maps */
+    container: new THREE.MeshStandardMaterial({
+      vertexColors: true, map: side.map, normalMap: side.normalMap, roughness: 0.58, metalness: 0,
+    }),
+    containerEnd: new THREE.MeshStandardMaterial({
+      vertexColors: true, map: end.map, normalMap: end.normalMap, roughness: 0.6, metalness: 0,
+    }),
+    /* glass: a real dielectric (ior 1.5) — almost invisible head-on, a mirror at grazing angles.
+       No transmission pass (it would re-render the opaque scene and double the draw calls). */
+    glass: new THREE.MeshPhysicalMaterial({
+      color: 0x8fb4bd, transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0, ior: 1.5,
+      side: THREE.DoubleSide, depthWrite: false,
     }),
     lamp: new THREE.MeshStandardMaterial({
       /* the lamp head is the light source: it must out-shine everything it lights */
@@ -430,10 +507,11 @@ export function buildWorld(scene, renderer) {
     }),
   };
   mats.concrete.map.wrapS = mats.concrete.map.wrapT = THREE.RepeatWrapping;
-  for (const k of ['concrete', 'metal', 'paint']) patchSkyVisibility(mats[k]);
+  for (const k of ['concrete', 'metal', 'paint', 'container', 'containerEnd']) patchSkyVisibility(mats[k]);
+  patchWetGround(mats.asphalt);
 
   /* ---------------- Ground / water ---------------- */
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), mats.asphalt);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), mats.asphalt);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   ground.position.y = 0;
@@ -631,7 +709,7 @@ export function buildWorld(scene, renderer) {
     for (let l = 0; l < levels; l++) {
       const shade = ci % 3 === 0 ? color : color;
       L.rotBox(x, HGT * l + HGT / 2, z, LEN, HGT - 0.09, WID, rot, {
-        color: shade, bucket: 'paint', tag: 'container',
+        color: shade, bucket: 'container', tag: 'container',
       });
     }
     return { x, z, rot, levels };
@@ -666,16 +744,23 @@ export function buildWorld(scene, renderer) {
   containers.push(container(46.0, 44.0, Math.PI / 2, 2, 1));
   // prominent number decals
   const codes = ['KRGU 214 388-7', 'KRGU 771 042-3', 'KRGU 508 619-1', 'KRGU 330 774-5', 'KRGU 662 190-8'];
-  const decalMat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.24 });
+  /* stencilled lettering only: transparent, pulled towards the camera so it never z-fights the corrugated panel */
+  const decalMat = new THREE.MeshStandardMaterial({
+    roughness: 0.62, metalness: 0, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
   const decalGeo = new THREE.PlaneGeometry(11.4, 2.1);   // every decal is the same size, so the geometry is shared
   containers.slice(0, 9).forEach((c, i) => {
     const t = TX.containerCodeTexture('#' + new THREE.Color(CONT_COLORS[i % 6]).getHexString(), codes[i % codes.length]);
     const mm = decalMat.clone(); mm.map = t;
     for (let side = 0; side < 2; side++) {
       const m = new THREE.Mesh(decalGeo, mm);
-      const off = 1.25 * (side ? 1 : -1);
-      m.position.set(c.x + (c.rot ? off : 0), 1.35, c.z + (c.rot ? 0 : off));
-      m.rotation.y = c.rot ? (side ? 0 : Math.PI) : (side ? Math.PI / 2 : -Math.PI / 2);
+      /* The decal sits on the long side, facing out. A rotated (π/2) container runs along Z, so its long sides
+         face ±X; an unrotated one runs along X with sides facing ±Z. The original code had the two rotations
+         swapped, which stood every decal on edge across the lane as an 11 m floating card. */
+      const off = (2.44 / 2 + 0.01) * (side ? 1 : -1);
+      m.position.set(c.x + (c.rot ? off : 0), 1.3, c.z + (c.rot ? 0 : off));
+      m.rotation.y = c.rot ? (side ? Math.PI / 2 : -Math.PI / 2) : (side ? 0 : Math.PI);
       scene.add(m);
     }
   });
@@ -800,61 +885,53 @@ export function buildWorld(scene, renderer) {
     scene.add(sp);
   });
 
-  /* ---------------- Puddles ---------------- */
-  const puddleMat = new THREE.MeshStandardMaterial({
-    /* standing water: dielectric (F0 ≈ 0.02), mirror-smooth; head-on you see the dark asphalt under it,
-       at grazing angles Fresnel turns it into a mirror of the sky band and the lamps */
-    color: 0x14171a, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.9,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    /* winding of the merged triangles depends on each puddle's orientation, so single-sided rendering randomly drops faces;
-       double-sided costs almost nothing on flat sheets. */
-    side: THREE.DoubleSide,
-  });
-  /* 46 separate meshes meant 46 transparent draw calls, all sorted every frame.
-     They are baked into one merged geometry at build time: one draw call at runtime.
-     Each puddle is a circle of radius r, scaled by sy along local Y, rotated by φ about Z:
-     CircleGeometry lies in XY facing +Z; after rotation.x = -90° it lies on the ground,
-     local (x, y, 0) → world (x, 0, -y), so world vertices are computed with that mapping directly. */
+  /* ---------------- Wetness ----------------
+     The 46 hard-edged puddle discs are gone: their positions now feed the ground's wetness mask as soft standing
+     water (one draw call and one transparent sort fewer). The rng sequence is consumed exactly as before, so every
+     later random placement is unchanged. */
   {
-    const SEG = 14, N = 46;
-    const pos = new Float32Array(N * SEG * 3 * 3);
-    const nrm = new Float32Array(N * SEG * 3 * 3);
-    let o = 0;
+    const N = 46, puddles = [];
     for (let i = 0; i < N; i++) {
       const cx = rng.range(-68, 68), cz = rng.range(-62, 48);
       const r = rng.range(0.7, 3.6);
       const phi = rng.range(0, 6.28), sy = rng.range(0.5, 1.0);
-      const cy = 0.012 + i * 0.00005;          // each sheet raised slightly so they don't z-fight
-      const cosP = Math.cos(phi), sinP = Math.sin(phi);
-      for (let k = 0; k < SEG; k++) {
-        const a0 = (k / SEG) * 6.283185307179586;
-        const a1 = ((k + 1) / SEG) * 6.283185307179586;
-        const lx0 = Math.cos(a0) * r, ly0 = Math.sin(a0) * r * sy;
-        const lx1 = Math.cos(a1) * r, ly1 = Math.sin(a1) * r * sy;
-        pos[o] = cx; pos[o + 1] = cy; pos[o + 2] = cz;
-        pos[o + 3] = cx + lx0 * cosP - ly0 * sinP; pos[o + 4] = cy; pos[o + 5] = cz - (lx0 * sinP + ly0 * cosP);
-        pos[o + 6] = cx + lx1 * cosP - ly1 * sinP; pos[o + 7] = cy; pos[o + 8] = cz - (lx1 * sinP + ly1 * cosP);
-        for (let v = 0; v < 3; v++) { nrm[o + v * 3] = 0; nrm[o + v * 3 + 1] = 1; nrm[o + v * 3 + 2] = 0; }
-        o += 9;
-      }
+      puddles.push({ x: cx, z: cz, r, phi, sy });
     }
-    const puddleGeo = new THREE.BufferGeometry();
-    puddleGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    puddleGeo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-    /* Frustum culling kept: three computes the bounding sphere on demand. The puddle set spans the site,
-       so it is rarely culled when facing it, but can be culled as a whole when facing away.
-       (Don't take the shortcut frustumCulled=false — that submits all 644 triangles every frame.) */
-    const puddles = new THREE.Mesh(puddleGeo, puddleMat);
-    scene.add(puddles);
+    /* tyre tracks: the yard lanes and the forklift's working area */
+    const tracks = [];
+    for (const x of [-4.2, -2.6, 2.6, 4.2]) tracks.push({ x0: x, z0: 48, x1: x + 0.4, z1: -60, w: 0.35, a: 0.35 });
+    for (const x of [-14.2, -12.8, 12.8, 14.2]) tracks.push({ x0: x, z0: 8, x1: x, z1: -60, w: 0.3, a: 0.25 });
+    tracks.push({ x0: 1, z0: -24, x1: 7, z1: -34, w: 0.9, a: 0.4 });
+    const wet = TX.wetnessMask(puddles, tracks);
+    /* plane UV → mask: u = (x + 200)/400 so mask_u = (x − x0)/(x1 − x0) = u·S/W − (x0 + S/2)/W, likewise for v
+       (v = 0 at world z = +200, mask row 0 = z0 with flipY off) */
+    const E = TX.WET_EXTENT, S = GROUND_SIZE, W = E.x1 - E.x0, D = E.z1 - E.z0;
+    wet.repeat.set(S / W, -S / D);
+    wet.offset.set(-(E.x0 + S / 2) / W, (S / 2 - E.z0) / D);
+    mats.asphalt.roughnessMap = wet;
+    mats.asphalt.clearcoatMap = wet;
+    mats.asphalt.clearcoatRoughnessMap = wet;
   }
 
-  /* ---------------- Decals: ground markings ---------------- */
-  const lineMat = new THREE.MeshBasicMaterial({ color: 0xc9d3d8, transparent: true, opacity: 0.16 });
-  for (let i = -3; i <= 3; i++) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 108), lineMat);
-    m.rotation.x = -Math.PI / 2;
-    m.position.set(i * 5.6, 0.02, -8);
-    scene.add(m);
+  /* ---------------- Ground markings ----------------
+     Worn thermoplastic paint: lit like any other surface (it was an unlit MeshBasicMaterial at 16% opacity, i.e. a
+     constant-brightness overlay that ignored the lamps), merged into one mesh. Lane lines run the length of the yard. */
+  {
+    const lineTex = TX.lineTexture();
+    lineTex.repeat.set(1, 108 / 16);
+    const lineMat = new THREE.MeshStandardMaterial({
+      map: lineTex, transparent: true, roughness: 0.55, metalness: 0, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    const parts = [];
+    for (let i = -3; i <= 3; i++) {
+      const g = new THREE.PlaneGeometry(0.4, 108);
+      g.rotateX(-Math.PI / 2); g.translate(i * 5.6, 0.015, -8);
+      parts.push(g);
+    }
+    const merged = mergePlanes(parts);
+    parts.forEach((g) => g.dispose());
+    scene.add(new THREE.Mesh(merged, lineMat));
   }
 
   /* ---------------- Lights ----------------

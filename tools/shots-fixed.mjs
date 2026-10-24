@@ -4,7 +4,7 @@
    Usage:
      node tools/shots-fixed.mjs [--out /tmp/shots] [--tag now] [--repeat 1]
                                 [--poses yard-center,dock-edge] [--query "&nopost"]
-                                [--hud] [--port 8233] [--root <another worktree>]
+                                [--hud] [--port 8233] [--root <another worktree>] [--pose name,x,z,yaw,pitch]
      node tools/shots-fixed.mjs --pair /tmp/shots/before /tmp/shots/after [--out /tmp/shots/pairs]
 
    Method:
@@ -167,7 +167,12 @@ const REPEAT = Math.max(1, Number(argOf('--repeat', '1')));
 const QUERY = argOf('--query', '');
 const WANT = argOf('--poses', '');
 const WITH_HUD = argv.includes('--hud');
-const poses = WANT ? POSES.filter((p) => WANT.split(',').includes(p.name)) : POSES;
+let poses = WANT ? POSES.filter((p) => WANT.split(',').includes(p.name)) : POSES;
+/* --pose name,x,z,yaw,pitch : an ad-hoc pose instead of the named set (for spot checks, not for the report) */
+if (argOf('--pose', '')) {
+  const [name, x, z, yaw, pitch] = argOf('--pose', '').split(',');
+  poses = [{ name, pos: [Number(x), Number(z)], yaw: Number(yaw), pitch: Number(pitch || 0), fov: 72, clock: 23 * 3600 + 50 * 60, steps: 40 }];
+}
 
 await suite.serve({ port: PORT, root: resolve(argOf('--root', ROOT)) });
 await mkdir(OUT, { recursive: true });
