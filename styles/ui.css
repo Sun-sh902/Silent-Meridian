@@ -27,8 +27,12 @@
   --suspect:#ff7a63;
 
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
-  --sans:"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,sans-serif;
-  --cond:"Avenir Next Condensed","HelveticaNeue-CondensedBold","PingFang SC","Microsoft YaHei",var(--sans);
+  --sans:system-ui,-apple-system,"Helvetica Neue","Segoe UI",Roboto,Arial,sans-serif;
+  --cond:"Avenir Next Condensed","HelveticaNeue-CondensedBold","Arial Narrow",var(--sans);
+  /* HUD hierarchy: only what you are reading right now is bright */
+  --hud-hi:#f2f6f7;
+  --hud-mid:rgba(214,226,230,.78);
+  --hud-lo:rgba(200,214,220,.58);
 
   /* ---- fluid type scale: hard 12px floor ---- */
   --fs-1:max(0.75rem,12px);
@@ -122,45 +126,51 @@ body.post-on #grade, body.post-on #vignette{display:none}
   min-width:0;width:100%;
 }
 
-.panel{
-  background:var(--panel);
-  border:1px solid var(--line);
-  backdrop-filter:blur(7px);
-  -webkit-backdrop-filter:blur(7px);
+.panel,#squad-list{position:relative;isolation:isolate}
+/* No box. Each group sits on a scrim made from the scene behind it — darkened and desaturated, so it carries a trace of
+   the lamp or sky it floats over instead of being flat translucent black. The scrim is a pseudo-element larger than the
+   group, masked to nothing towards the screen centre from the corner the group is anchored to: no edge anywhere, and
+   the text itself is never masked. */
+.panel::before,#squad-list::before{
+  content:"";position:absolute;z-index:-1;inset:-1.2rem;pointer-events:none;
+  background:rgba(6,9,12,.34);
+  backdrop-filter:blur(10px) saturate(.7) brightness(.6);
+  -webkit-backdrop-filter:blur(10px) saturate(.7) brightness(.6);
 }
+#objective-panel::before{-webkit-mask-image:radial-gradient(85% 85% at 0 0,#000 45%,transparent 100%);mask-image:radial-gradient(85% 85% at 0 0,#000 45%,transparent 100%)}
+#status-panel::before{-webkit-mask-image:radial-gradient(90% 95% at 100% 0,#000 40%,transparent 100%);mask-image:radial-gradient(90% 95% at 100% 0,#000 40%,transparent 100%)}
+#squad-list::before{-webkit-mask-image:radial-gradient(85% 85% at 0 100%,#000 45%,transparent 100%);mask-image:radial-gradient(85% 85% at 0 100%,#000 45%,transparent 100%)}
+#weapon-panel::before{-webkit-mask-image:radial-gradient(90% 90% at 100% 100%,#000 40%,transparent 100%);mask-image:radial-gradient(90% 90% at 100% 100%,#000 40%,transparent 100%)}
 
 /* ---------------- Objectives ---------------- */
 #objective-panel{
   width:min(20rem,30vw);max-width:100%;
-  padding:var(--pad-3) var(--pad-3) calc(var(--pad-3) + 0.1rem);
-  border-left:2px solid var(--accent);
+  padding:var(--pad-2) calc(var(--pad-3) * 2) var(--pad-3) var(--pad-2);
 }
 .panel-title{
-  display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--pad-2);
-  padding-bottom:var(--pad-2);margin-bottom:var(--pad-2);border-bottom:1px solid var(--line);
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--pad-2);margin-bottom:var(--pad-2);
 }
-.panel-title .tag{
-  font:600 var(--fs-1)/1.2 var(--mono);letter-spacing:.14em;color:var(--accent);
-}
-.panel-title .codename{
-  font:700 var(--fs-4)/1.2 var(--cond);letter-spacing:.1em;color:var(--txt);
-}
+.panel-title .tag{font:500 var(--fs-1)/1.2 var(--mono);letter-spacing:.18em;color:var(--hud-lo)}
+.panel-title .codename{font:600 var(--fs-1)/1.2 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--hud-lo)}
 #objective-list{list-style:none;display:flex;flex-direction:column;gap:var(--pad-1)}
 #objective-list li{
   display:flex;gap:var(--pad-2);align-items:flex-start;
-  font-size:var(--fs-3);line-height:1.35;color:var(--txt-dim);transition:color .3s;
+  font-size:var(--fs-3);line-height:1.35;color:var(--hud-lo);transition:color .3s;
 }
+/* status glyph instead of a bordered checkbox: · open, ✓ done, ✕ failed */
 #objective-list li .box{
-  flex:0 0 auto;width:0.9em;height:0.9em;margin-top:0.25em;
-  border:1px solid var(--line-strong);display:grid;place-items:center;
-  font:700 var(--fs-1)/1 var(--mono);color:var(--accent);
+  flex:0 0 auto;width:0.9em;margin-top:0.12em;text-align:center;
+  font:600 var(--fs-2)/1.2 var(--mono);color:var(--hud-lo);
 }
-#objective-list li b{color:var(--txt);font-weight:600}
-#objective-list li.done{color:var(--txt-faint);text-decoration:line-through;text-decoration-color:rgba(120,200,180,.5)}
-#objective-list li.done .box{background:var(--accent-dim);border-color:var(--accent)}
-#objective-list li.failed{color:var(--danger)}
-#objective-list li.active b{color:#fff}
-#objective-list li .sub{display:block;font-size:var(--fs-2);color:var(--txt-faint);margin-top:2px}
+#objective-list li .box:empty::before{content:"·"}
+#objective-list li b{color:var(--hud-mid);font-weight:500}
+#objective-list li.active b{color:var(--hud-hi);font-weight:600}
+/* only the next open objective is bright; the rest of the open list steps down */
+#objective-list li.active ~ li.active b{color:var(--hud-mid);font-weight:500}
+#objective-list li.done{color:var(--hud-lo);text-decoration:line-through;text-decoration-color:rgba(200,214,220,.35)}
+#objective-list li.done b{color:var(--hud-lo)}
+#objective-list li.failed,#objective-list li.failed b,#objective-list li.failed .box{color:var(--danger)}
+#objective-list li .sub{display:block;font-size:var(--fs-2);color:var(--hud-lo);margin-top:1px}
 
 /* ---------------- Compass ---------------- */
 #compass-wrap{
@@ -175,24 +185,25 @@ body.post-on #grade, body.post-on #vignette{display:none}
   position:absolute;bottom:0;left:50%;transform:translateX(-50%);
   display:flex;flex-direction:column;align-items:center;line-height:1;
 }
-#compass-readout #bearing-text{font:700 var(--fs-2)/1 var(--mono);letter-spacing:.18em;color:var(--accent)}
-#compass-readout #bearing-deg{font:500 var(--fs-2)/1.5 var(--mono);color:var(--txt-dim)}
+#compass-readout #bearing-text{font:600 var(--fs-2)/1 var(--mono);letter-spacing:.18em;color:var(--hud-hi)}
+#compass-readout #bearing-deg{font:500 var(--fs-2)/1.5 var(--mono);color:var(--hud-lo);font-variant-numeric:tabular-nums}
 
 /* ---------------- Status ---------------- */
-#status-panel{width:min(13rem,21vw);max-width:100%;padding:var(--pad-3)}
+#status-panel{width:min(13rem,21vw);max-width:100%;padding:var(--pad-2) var(--pad-2) var(--pad-2) calc(var(--pad-3) * 2)}
 .stat-row{
   display:flex;justify-content:space-between;align-items:baseline;gap:var(--pad-2);
-  padding:0.15rem 0;font-size:var(--fs-3);
+  padding:0.1rem 0;font-size:var(--fs-3);
 }
-.stat-row .k{color:var(--txt-faint);font-size:var(--fs-2);min-width:0}
-.stat-row .v{font-family:var(--mono);font-size:var(--fs-3);color:var(--txt);white-space:nowrap}
-#alert-state.calm{color:var(--accent)}
+.stat-row .k{color:var(--hud-lo);font:500 var(--fs-1)/1.4 var(--sans);letter-spacing:.14em;text-transform:uppercase;min-width:0}
+.stat-row .v{font-family:var(--mono);font-size:var(--fs-3);color:var(--hud-mid);white-space:nowrap;font-variant-numeric:tabular-nums}
+#alert-state.calm{color:var(--hud-mid)}
 #alert-state.warn{color:var(--amber)}
 #alert-state.hot{color:var(--danger)}
 
 /* ---------------- Minimap ---------------- */
 #mini-map{
-  padding:var(--pad-2);background:var(--panel);border:1px solid var(--line);
+  padding:var(--pad-1);background:rgba(6,9,12,.3);
+  backdrop-filter:blur(8px) saturate(.7) brightness(.6);-webkit-backdrop-filter:blur(8px) saturate(.7) brightness(.6);
   width:min(12rem,17vw);max-width:100%;
 }
 #minimap{display:block;width:100%;height:auto;aspect-ratio:1}
@@ -245,8 +256,9 @@ body.post-on #grade, body.post-on #vignette{display:none}
 }
 #target-card{
   width:100%;padding:var(--pad-2) var(--pad-3);
-  background:rgba(8,14,20,.78);border:1px solid var(--line);border-left:2px solid var(--amber);
-  backdrop-filter:blur(6px);transition:border-color .2s;
+  background:rgba(6,9,12,.32);border-left:2px solid var(--amber);
+  backdrop-filter:blur(8px) saturate(.7) brightness(.6);-webkit-backdrop-filter:blur(8px) saturate(.7) brightness(.6);
+  transition:border-color .2s;
 }
 #target-card.armed{border-left-color:var(--suspect)}
 #target-card.civilian{border-left-color:var(--civ)}
@@ -261,58 +273,60 @@ body.post-on #grade, body.post-on #vignette{display:none}
 .tc-bar i{display:block;height:100%;width:0;background:var(--amber);transition:width .1s linear}
 #target-card.armed .tc-bar i{background:var(--suspect)}
 #target-card.civilian .tc-bar i{background:var(--civ)}
-.tc-note{font:500 var(--fs-1)/1.4 var(--mono);color:var(--txt-faint)}
+.tc-note{font:500 var(--fs-1)/1.4 var(--sans);color:var(--hud-lo)}
 
 #prompt{
   display:flex;align-items:center;gap:var(--pad-2);
   padding:var(--pad-1) var(--pad-3) var(--pad-1) var(--pad-1);
-  background:rgba(8,14,20,.82);border:1px solid var(--line-strong);backdrop-filter:blur(6px);
+  background:rgba(6,9,12,.34);backdrop-filter:blur(8px) saturate(.7) brightness(.6);-webkit-backdrop-filter:blur(8px) saturate(.7) brightness(.6);
   max-width:100%;
 }
 #prompt b{
   display:grid;place-items:center;flex:0 0 auto;width:1.5rem;height:1.5rem;
   background:var(--accent);color:#04120f;font:700 var(--fs-2)/1 var(--mono);border-radius:var(--r);
 }
-#prompt span{font:600 var(--fs-3)/1.3 var(--sans);color:var(--txt)}
+#prompt span{font:600 var(--fs-3)/1.3 var(--sans);color:var(--hud-hi)}
 
 /* ---------------- Tactical pause banner ---------------- */
 #observe-banner{
   justify-self:center;text-align:center;padding:var(--pad-2) var(--pad-4);
-  background:rgba(8,20,26,.72);border:1px solid rgba(242,182,74,.4);
+  background:rgba(6,9,12,.3);backdrop-filter:blur(8px) saturate(.7) brightness(.6);-webkit-backdrop-filter:blur(8px) saturate(.7) brightness(.6);
   animation:bannerIn .2s ease-out;max-width:100%;
 }
 @keyframes bannerIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 .ob-label{font:700 var(--fs-3)/1.25 var(--cond);letter-spacing:.24em;color:var(--amber)}
-.ob-sub{font-size:var(--fs-2);color:var(--txt-dim);letter-spacing:.04em;margin-top:2px}
+.ob-sub{font-size:var(--fs-2);color:var(--hud-mid);letter-spacing:.02em;margin-top:2px}
 
 /* ---------------- Squad ---------------- */
 #squad-panel{display:flex;flex-direction:column;gap:var(--pad-2);pointer-events:none;min-width:0;max-width:100%}
 #squad-order-chip{
-  display:flex;align-items:center;gap:var(--pad-2);padding:var(--pad-1) var(--pad-3);
-  background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--accent);
-  align-self:flex-start;max-width:100%;
+  display:flex;align-items:baseline;gap:var(--pad-2);padding:0 var(--pad-2);
+  align-self:flex-start;max-width:100%;text-shadow:0 1px 6px rgba(0,0,0,.85);
 }
-.so-label{font-size:var(--fs-1);color:var(--txt-faint);letter-spacing:.12em;white-space:nowrap}
-.so-value{font:700 var(--fs-4)/1.2 var(--cond);letter-spacing:.08em;color:var(--accent)}
-#squad-list{display:flex;flex-direction:column;gap:var(--pad-1);min-width:0}
+.so-label{font:500 var(--fs-1)/1.2 var(--sans);color:var(--hud-lo);letter-spacing:.16em;text-transform:uppercase;white-space:nowrap}
+.so-value{font:600 var(--fs-4)/1.2 var(--sans);letter-spacing:.01em;color:var(--hud-hi)}
+#squad-list{
+  display:flex;flex-direction:column;gap:2px;min-width:0;padding:var(--pad-1) var(--pad-3) var(--pad-1) var(--pad-2);
+}
+/* one row per operator: mono callsign, sans role, a 2 px health line — no card, no border */
 .sq{
   display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;
-  gap:var(--pad-2);padding:var(--pad-1) var(--pad-3);
-  background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--friendly);
-  width:min(17rem,26vw);max-width:100%;
-  transition:opacity .25s,border-color .25s;
+  column-gap:var(--pad-2);row-gap:3px;padding:2px 0 4px;
+  width:min(15rem,24vw);max-width:100%;
+  transition:opacity .25s;
 }
-.sq .idx{font:700 var(--fs-2)/1 var(--mono);color:var(--txt-faint)}
-.sq .nm{display:flex;flex-direction:column;gap:1px;min-width:0}
-.sq .nm b{font:600 var(--fs-3)/1.25 var(--sans);color:var(--txt);overflow-wrap:anywhere}
-.sq .nm span{font:500 var(--fs-1)/1.3 var(--mono);letter-spacing:.04em;color:var(--txt-faint)}
-.sq .hp{grid-column:2/4;height:4px;background:rgba(255,255,255,.10);overflow:hidden}
-.sq .hp i{display:block;height:100%;background:var(--friendly);transition:width .25s}
-.sq.down{border-left-color:var(--danger);opacity:.62}
+.sq .idx{font:500 var(--fs-1)/1 var(--mono);color:var(--hud-lo);font-variant-numeric:tabular-nums}
+.sq .nm{display:flex;flex-direction:column;gap:0;min-width:0}
+.sq .nm b{font:600 var(--fs-2)/1.25 var(--mono);letter-spacing:.04em;color:var(--hud-mid);overflow-wrap:anywhere}
+.sq .nm span{font:500 var(--fs-1)/1.3 var(--sans);letter-spacing:.06em;color:var(--hud-lo)}
+.sq .hp{grid-column:2/4;height:2px;background:rgba(255,255,255,.07);overflow:hidden}
+.sq .hp i{display:block;height:100%;background:rgba(214,226,230,.42);transition:width .25s}
+.sq.down{opacity:.7}
+.sq.down .nm b,.sq.down .st{color:var(--danger)}
 .sq.down .hp i{background:var(--danger)}
 .sq.hurt .hp i{background:var(--amber)}
-.sq.acting{border-left-color:var(--accent)}
-.sq .st{font:500 var(--fs-1)/1.2 var(--mono);color:var(--txt-faint);text-align:right;white-space:nowrap}
+.sq.acting .nm b{color:var(--hud-hi)}
+.sq .st{font:500 var(--fs-1)/1.2 var(--sans);color:var(--hud-lo);text-align:right;white-space:nowrap}
 
 #command-bar{display:flex;flex-wrap:wrap;gap:var(--pad-1);margin-top:2px;pointer-events:auto}
 .cmd{
@@ -322,23 +336,26 @@ body.post-on #grade, body.post-on #vignette{display:none}
   display:flex;flex-direction:column;align-items:center;gap:1px;
   padding:var(--pad-1) var(--pad-2);
   min-width:clamp(3.1rem,5.4vw,4.25rem);
-  background:var(--panel);border:1px solid var(--line);
-  border-radius:0;
+  /* controls keep a minimal outline: they are the only clickable things in the HUD */
+  background:rgba(6,9,12,.3);border:1px solid rgba(200,214,220,.16);
+  backdrop-filter:blur(8px) saturate(.7) brightness(.62);-webkit-backdrop-filter:blur(8px) saturate(.7) brightness(.62);
+  border-radius:var(--r);
   transition:background .15s,border-color .15s,transform .1s;
   cursor:pointer;user-select:none;
 }
-.cmd:hover{background:rgba(84,214,198,.14);border-color:var(--line-strong)}
+.cmd:hover{background:rgba(255,255,255,.08);border-color:rgba(200,214,220,.34)}
 .cmd:active{transform:translateY(1px)}
-.cmd b{font:700 var(--fs-2)/1 var(--mono);color:var(--accent)}
-.cmd span{font:600 var(--fs-3)/1.2 var(--sans);color:var(--txt)}
+.cmd b{font:500 var(--fs-1)/1 var(--mono);color:var(--hud-lo)}
+.cmd span{font:500 var(--fs-3)/1.2 var(--sans);color:var(--hud-mid)}
 .cmd i{font:500 var(--fs-1)/1 var(--mono);letter-spacing:.06em;color:var(--txt-faint);font-style:normal}
-.cmd.active{background:var(--accent-dim);border-color:var(--accent)}
-.cmd.active span{color:#fff}
-.cmd.flash{background:rgba(84,214,198,.35);transform:translateY(-2px)}
+.cmd.active{border-color:rgba(242,246,247,.55)}
+.cmd.active span{color:var(--hud-hi);font-weight:600}
+.cmd.active b{color:var(--hud-mid)}
+.cmd.flash{background:rgba(255,255,255,.18);transform:translateY(-2px)}
 .cmd.error{background:rgba(255,97,82,.28);border-color:var(--danger)}
 #cursor-hint{
   margin-top:2px;font:500 var(--fs-2)/1.4 var(--sans);letter-spacing:.02em;
-  color:var(--txt-faint);transition:color .2s;max-width:100%;
+  color:var(--hud-lo);transition:color .2s;max-width:100%;text-shadow:0 1px 6px rgba(0,0,0,.85);
 }
 #cursor-hint b{color:var(--amber);font-weight:700}
 #cursor-hint.on{color:var(--amber)}
@@ -348,13 +365,13 @@ body.post-on #grade, body.post-on #vignette{display:none}
   justify-self:end;padding:var(--pad-2) var(--pad-3) var(--pad-3);
   width:min(12rem,19vw);max-width:100%;text-align:right;
 }
-.wp-name{font:700 var(--fs-2)/1.2 var(--cond);letter-spacing:.12em;color:var(--txt-dim);margin-bottom:var(--pad-1)}
+.wp-name{font:500 var(--fs-1)/1.2 var(--mono);letter-spacing:.16em;color:var(--hud-lo);margin-bottom:0}
 .wp-ammo{display:flex;align-items:baseline;justify-content:flex-end;gap:var(--pad-1);flex-wrap:wrap}
-.wp-ammo #wp-mag{font:700 var(--fs-7)/1.15 var(--mono);color:#fff;letter-spacing:-.02em}
-.wp-ammo em{font:400 var(--fs-5)/1.2 var(--mono);color:var(--txt-faint);font-style:normal}
-.wp-ammo .reserve{font:500 var(--fs-5)/1.2 var(--mono);color:var(--txt-dim)}
+.wp-ammo #wp-mag{font:600 var(--fs-7)/1.1 var(--mono);color:var(--hud-hi);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.wp-ammo em{font:300 var(--fs-5)/1.2 var(--mono);color:var(--hud-lo);font-style:normal}
+.wp-ammo .reserve{font:500 var(--fs-4)/1.2 var(--mono);color:var(--hud-lo);font-variant-numeric:tabular-nums}
 .wp-ammo.low #wp-mag{color:var(--danger)}
-.wp-meta{display:flex;justify-content:flex-end;gap:var(--pad-3);margin-top:var(--pad-1);font:500 var(--fs-1)/1.2 var(--mono);color:var(--txt-faint);flex-wrap:wrap}
+.wp-meta{display:flex;justify-content:flex-end;gap:var(--pad-3);margin-top:2px;font:500 var(--fs-1)/1.2 var(--mono);letter-spacing:.08em;color:var(--hud-lo);flex-wrap:wrap}
 .wp-reload{margin-top:var(--pad-1);font:600 var(--fs-2)/1 var(--mono);letter-spacing:.12em;color:var(--amber);animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.35}}
 
@@ -364,7 +381,7 @@ body.post-on #grade, body.post-on #vignette{display:none}
   color:#e6f4fa;text-shadow:0 2px 10px rgba(0,0,0,.95);opacity:0;transition:opacity .25s;
 }
 #subtitle.on{opacity:1}
-#subtitle b{color:var(--accent);font-weight:600;font-style:normal}
+#subtitle b{color:var(--hud-hi);font:600 var(--fs-3)/1 var(--mono);letter-spacing:.08em;font-style:normal}
 #log{
   justify-self:end;display:flex;flex-direction:column;gap:var(--pad-1);align-items:flex-end;
   max-width:min(21rem,26vw);min-width:0;
@@ -373,14 +390,14 @@ body.post-on #grade, body.post-on #vignette{display:none}
   max-height:100%;overflow:hidden;
 }
 .log-item{
-  padding:var(--pad-1) var(--pad-3);background:rgba(8,14,20,.66);
-  border-right:2px solid var(--line-strong);
-  font:500 var(--fs-2)/1.4 var(--sans);color:var(--txt-dim);text-align:right;
+  padding:1px 0;
+  font:500 var(--fs-2)/1.4 var(--sans);color:var(--hud-mid);text-align:right;
+  text-shadow:0 1px 6px rgba(0,0,0,.9),0 0 2px rgba(0,0,0,.8);
   animation:logIn .25s ease-out;max-width:100%;
 }
-.log-item.good{border-right-color:var(--accent);color:#dff6f2}
-.log-item.bad{border-right-color:var(--danger);color:#ffd9d4}
-.log-item.warn{border-right-color:var(--amber);color:#ffeac6}
+.log-item.good{color:var(--hud-mid)}
+.log-item.bad{color:#ff9d92}
+.log-item.warn{color:#ffd28a}
 @keyframes logIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
 #radio-feed{
   display:flex;flex-direction:column;gap:var(--pad-3);max-width:min(19rem,24vw);min-width:0;
@@ -388,14 +405,14 @@ body.post-on #grade, body.post-on #vignette{display:none}
 }
 .rd{opacity:0;transition:opacity .4s;max-width:100%}
 .rd.on{opacity:1}
-.rd .who{font:700 var(--fs-1)/1.2 var(--mono);letter-spacing:.12em;color:var(--accent);margin-bottom:2px}
-.rd .what{font-size:var(--fs-3);line-height:1.45;color:#dceef5;text-shadow:0 2px 8px rgba(0,0,0,.9)}
+.rd .who{font:500 var(--fs-1)/1.2 var(--mono);letter-spacing:.14em;color:var(--hud-lo);margin-bottom:2px;text-shadow:0 1px 6px rgba(0,0,0,.9)}
+.rd .what{font-size:var(--fs-3);line-height:1.45;color:var(--hud-mid);text-shadow:0 2px 8px rgba(0,0,0,.9)}
 
 #hint-bar{
   font:500 var(--fs-1)/1.6 var(--mono);letter-spacing:.03em;
-  color:var(--txt-faint);text-align:center;max-width:100%;
+  color:var(--hud-lo);text-align:center;max-width:100%;text-shadow:0 1px 6px rgba(0,0,0,.85);
 }
-#hint-bar b{color:var(--accent);font-weight:600}
+#hint-bar b{color:var(--hud-mid);font-weight:600}
 
 /* ============================================================
    Tactical map
