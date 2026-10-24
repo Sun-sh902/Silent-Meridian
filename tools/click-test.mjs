@@ -57,6 +57,25 @@ const page = await newPage({ pointerLock: true });
 await page.goto('http://127.0.0.1:8199/', { waitUntil: 'load' });
 await wait(900);
 
+await step('title shows the live port behind the menu (attract mode)', async () => {
+  await page.waitForFunction(() => document.body.classList.contains('attract-live'), { timeout: 30000 });
+  const st = await page.evaluate(() => ({
+    attract: !!window.__game.attract, scene: !!window.__game.scene, state: window.__game.state,
+    focus: document.activeElement && document.activeElement.id,
+  }));
+  assert(st.attract && st.scene && st.state === 'menu', 'attract world not running: ' + JSON.stringify(st));
+  await page.evaluate(() => { window.__attractScene = window.__game.scene.uuid; });
+  return JSON.stringify(st);
+});
+
+await step('title menu: ↓ moves focus to the next item', async () => {
+  await page.evaluate(() => document.getElementById('btn-quick-deploy').focus());
+  await page.keyboard.press('ArrowDown');
+  const id = await page.evaluate(() => document.activeElement && document.activeElement.id);
+  assert(id === 'btn-briefing', 'focus after ArrowDown: ' + id);
+  return id;
+});
+
 await step('title → briefing', async () => {
   const i = await clickInfo(page, '[data-action="screen"][data-screen="briefing"]');
   await wait(300);
@@ -99,7 +118,9 @@ await step('click Deploy', async () => {
   }));
   assert(st.state === 'play', 'did not enter play state: ' + st.state);
   assert(st.hud, 'HUD not shown');
-  return `state=${st.state}`;
+  const same = await page.evaluate(() => window.__game.scene.uuid === window.__attractScene);
+  assert(same, 'deploy rebuilt the world instead of adopting the title\'s live port');
+  return `state=${st.state}, adopted live world`;
 });
 
 await step('clicks under pointer lock do not leak to HUD buttons', async () => {

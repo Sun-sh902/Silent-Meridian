@@ -93,6 +93,9 @@ if (!boot.game || boot.actions === 0) {
 }
 
 await step('01 main menu', async () => {
+  /* the title sits over the live port: wait for attract mode, then give the camera a moment to settle */
+  await page.waitForFunction(() => document.body.classList.contains('attract-live'), { timeout: 30000 });
+  await wait(5000);
   await shoot('01-title');
   return '1600x900';
 });

@@ -80,16 +80,20 @@ float hash( vec2 p ) {
 }
 
 /* Grade: one gentle curve applied after ACES in linear display space.
-   · a slight toe lift (black point 0.4% linear ≈ sRGB 12): the deepest shadows keep a little separation
-     instead of clipping, without turning milky
-   · a mild midtone contrast around 0.18 linear so the image doesn't go flat after the lift
+   · a toe (subtract a 0.09% pedestal): true black is reachable again, so the night has a floor
+   · midtone contrast 1.10 around 0.18 linear: this is what keeps shadow separation once the lift is gone
    · a gentle highlight rolloff above ~0.8 luminance, like a film shoulder: lamp cores go towards white
      rather than saturated orange. Everything below that keeps its saturation.
    No hue shifts — the colour temperature comes from the lights (sodium vs sky), not from the grade. */
 vec3 grade( vec3 c ) {
-  c = c * 0.996 + 0.004 * ( 1.0 - c );
+  /* A toe, not a lift. The first version added a 0.4% pedestal "so the deepest shadows keep separation";
+     measured, that put the black point above sRGB 8 and no pixel in any reference pose was fully dark
+     (crushed-black share 0% in all five), which is why a night scene read as an overcast morning.
+     Subtract a pedestal and rescale instead: the floor goes back to true black and the shadows keep their
+     separation through the contrast term below, not through an offset. */
+  c = max( c - 0.0009, 0.0 ) * ( 1.0 / ( 1.0 - 0.0009 ) );
   vec3 l = log2( max( c, 1e-5 ) / 0.18 );
-  c = 0.18 * exp2( l * 1.07 );
+  c = 0.18 * exp2( l * 1.10 );
   float luma = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
   c = mix( c, vec3( luma ), smoothstep( 0.8, 1.3, luma ) * 0.25 );
   return clamp( c, 0.0, 1.0 );
