@@ -69,6 +69,8 @@ body{
 /* ============================================================
    Full-screen effect layers (must cover the viewport; not layout elements)
    ============================================================ */
+/* with post-processing on, grading and vignette happen in the composite shader (src/post.js); only one layer may remain */
+body.post-on #grade, body.post-on #vignette{display:none}
 #grade{
   position:absolute;inset:0;pointer-events:none;
   background:

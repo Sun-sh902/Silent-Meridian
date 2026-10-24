@@ -147,6 +147,21 @@ await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
 await page.goto('http://127.0.0.1:8202/?deploy=1&pos=0,-30', { waitUntil: 'load' });
 await wait(2600);
 
+/* ============ 0. reduced motion reaches the renderer too ============
+   Every time-varying visual effect (post grain and chromatic aberration) must switch off under
+   prefers-reduced-motion, not only the CSS animations. This page already emulates it. */
+{
+  const rm = await page.evaluate(() => {
+    const g = window.__game;
+    if (!g.post) return { post: false };
+    const u = g.post.composite.uniforms;
+    g.renderFrame();
+    return { post: true, grain: u.grain.value, aberration: u.aberration.value, cssVeils: getComputedStyle(document.getElementById('grade')).display };
+  });
+  suite.check('reduced motion: post grain and aberration off, CSS veils replaced by the shader grade',
+    rm.post && rm.grain === 0 && rm.aberration === 0 && rm.cssVeils === 'none', JSON.stringify(rm));
+}
+
 console.log('\n===== A. Window width sweep (in-game HUD) =====');
 for (const w of [1920, 1440, 1280, 1024, 900, 768, 600, 480]) {
   await audit(`in game ${w}×${Math.round(w * 0.62)}`, { width: w, height: Math.round(w * 0.62), deviceScaleFactor: 1 });
