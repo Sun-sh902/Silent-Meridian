@@ -1,7 +1,7 @@
 {
   "v": "1.1.0",
-  "hash": "70ea82064b01",
-  "at": "2026-10-24T03:49:40.791Z",
+  "hash": "705b79092247",
+  "at": "2026-10-24T04:13:05.662Z",
   "inputs": {
     "src/actors.js": "adfef9e5e051",
     "src/audio.js": "06f2eb24e64a",
@@ -19,10 +19,10 @@
     "src/post.js": "b562d3d2fec9",
     "src/screens.js": "88423ae9c3a9",
     "src/tacmap.js": "3ddcb0894fc7",
-    "src/textures.js": "d641165e3ac4",
+    "src/textures.js": "14f60e6b7e60",
     "src/tuning.js": "99c05b1280b8",
     "src/viewmodel.js": "1c38d5900664",
-    "src/world.js": "6e9313d2bfba",
+    "src/world.js": "bd5117d22b16",
     "index.html": "9ff7f09b3b74",
     "styles/ui.css": "62b73716e850"
   }

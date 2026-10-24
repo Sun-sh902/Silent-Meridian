@@ -204,6 +204,26 @@ export function wetnessMask(puddles, tracks) {
   return t;
 }
 
+/* ---------------- Fog noise (light shafts) ----------------
+   Soft, tileable value noise: a few octaves of blurred blobs, used to make fog drift through the lamp beams. */
+export function fogNoiseTexture() {
+  const S = 128, c = mkCanvas(S, S), g = c.getContext('2d');
+  g.fillStyle = '#808080'; g.fillRect(0, 0, S, S);
+  for (const [n, rMin, rMax, a] of [[40, 18, 40, 0.18], [90, 6, 16, 0.14]]) {
+    for (let i = 0; i < n; i++) {
+      const x = rand() * S, y = rand() * S, r = rMin + rand() * (rMax - rMin), v = rand() < 0.5 ? 0 : 255;
+      wrapped(S, S, x, y, r, (X, Y) => {
+        const grd = g.createRadialGradient(X, Y, 0, X, Y, r);
+        grd.addColorStop(0, `rgba(${v},${v},${v},${a})`); grd.addColorStop(1, `rgba(${v},${v},${v},0)`);
+        g.fillStyle = grd; g.fillRect(X - r, Y - r, r * 2, r * 2);
+      });
+    }
+  }
+  const t = dataTex(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
 /* ---------------- Water (harbour) ripple normal ---------------- */
 export function rippleNormal() {
   const S = 256, hc = mkCanvas(S, S), hg = hc.getContext('2d');
